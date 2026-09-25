@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arbitre — Analyse de débat</title>
+  <style>
+    /* Une direction sombre, dense et contrastée, inspirée des interfaces audio professionnelles. */
+    :root {
+      --ink: #f5f7f4;
+      --muted: #9da7a0;
+      --faint: #66716a;
+      --bg: #101412;
+      --panel: #171c19;
+      --panel-2: #1e2521;
+      --line: #2d3731;
+      --green: #1ed760;
+      --green-soft: #a5f3bd;
+      --red: #ff6b6b;
+      --amber: #ffc857;
+      --blue: #7cc5ff;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .24);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { min-width: 1060px; }
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 238px 1fr; }
+    .sidebar { border-right: 1px solid var(--line); padding: 28px 18px; display: flex; flex-direction: column; background: #0d100e; }
+    .brand { padding: 0 12px 34px; }
+    .brand-mark { display: inline-grid; place-items: center; width: 32px; height: 32px; margin-bottom: 14px; border-radius: 50%; background: var(--green); color: #09120c; font-size: 18px; font-weight: 900; }
+    .brand h1 { margin: 0; font-size: 24px; letter-spacing: -.04em; }
+    .brand p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .nav-label { padding: 0 12px 9px; color: var(--faint); font-size: 10px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    .nav button { display: flex; width: 100%; align-items: center; gap: 12px; border: 0; border-radius: 7px; margin-bottom: 4px; padding: 12px; background: transparent; color: var(--muted); text-align: left; font-weight: 650; }
+    .nav button:hover, .nav button.active { background: #19231c; color: var(--ink); }
+    .nav button.active { box-shadow: inset 3px 0 var(--green); color: var(--green-soft); }
+    .nav-icon { width: 20px; color: var(--faint); text-align: center; font-size: 16px; }
+    .nav button.active .nav-icon { color: var(--green); }
+    .side-bottom { margin-top: auto; padding: 12px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; line-height: 1.5; }
+    .main { min-width: 0; display: flex; flex-direction: column; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 74px; border-bottom: 1px solid var(--line); padding: 0 34px; }
+    .eyebrow { color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .top-actions { display: flex; gap: 9px; }
+    .content { padding: 32px 34px 52px; }
+    .view { display: none; max-width: 1450px; margin: 0 auto; }
+    .view.active { display: block; }
+    h2 { margin: 0 0 7px; font-size: 30px; letter-spacing: -.045em; }
+    h3 { margin: 0; font-size: 15px; }
+    .lede { max-width: 630px; margin: 0 0 26px; color: var(--muted); line-height: 1.55; }
+    .workspace { display: grid; grid-template-columns: minmax(440px, .88fr) minmax(480px, 1.12fr); gap: 16px; min-height: 650px; }
+    .panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); overflow: hidden; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 62px; border-bottom: 1px solid var(--line); padding: 15px 19px; }
+    .panel-title { display: flex; align-items: center; gap: 10px; font-weight: 800; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+    .live-dot.on { background: var(--green); box-shadow: 0 0 0 4px rgba(30,215,96,.12); }
+    .panel-body { padding: 19px; }
+    .speaker-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 17px; }
+    .speaker-btn { flex: 1 1 140px; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--panel-2); color: var(--muted); text-align: left; font-weight: 750; }
+    .speaker-btn:hover { border-color: var(--green); color: var(--ink); }
+    .speaker-btn.active { border-color: var(--green); background: rgba(30,215,96,.13); color: var(--green-soft); }
+    .transcript { height: 455px; overflow: auto; padding: 2px 3px 18px; }
+    .empty { display: grid; place-items: center; height: 100%; padding: 50px; color: var(--faint); text-align: center; line-height: 1.55; }
+    .message { position: relative; border-left: 2px solid transparent; margin: 0 0 15px; padding: 0 10px 0 12px; }
+    .message:hover { border-color: var(--green); }
+    .message-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--muted); font-size: 11px; }
+    .message-meta strong { color: var(--green-soft); font-size: 12px; }
+    .message-text { margin: 0; color: var(--ink); line-height: 1.5; white-space: pre-wrap; }
+    .message.interim .message-text { color: var(--faint); font-style: italic; }
+    .message mark { border-radius: 3px; padding: 1px 3px; color: var(--ink); }
+    mark.fallacy { background: rgba(255,107,107,.35); border-bottom: 1px solid var(--red); }
+    mark.strong { background: rgba(30,215,96,.28); border-bottom: 1px solid var(--green); }
+    .controls { border-top: 1px solid var(--line); padding-top: 15px; }
+    .controls-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .button { border: 1px solid var(--line); border-radius: 5px; padding: 9px 13px; background: var(--panel-2); color: var(--ink); font-weight: 700; font-size: 12px; }
+    .button:hover { border-color: var(--muted); background: #27322b; }
+    .button.primary { border-color: var(--green); background: var(--green); color: #07120a; }
+    .button.primary:hover { background: #5bea88; }
+    .button.danger { color: var(--red); }
+    .button:disabled { cursor: not-allowed; opacity: .5; }
+    .file-input { display: none; }
+    .status { min-height: 17px; margin-top: 10px; color: var(--muted); font-size: 11px; }
+    .status.error { color: var(--red); }
+    .status.success { color: var(--green-soft); }
+    .analysis-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line); padding: 0 19px; }
+    .tab { flex: 0 0 auto; border: 0; border-bottom: 2px solid transparent; padding: 15px 10px 13px; background: transparent; color: var(--muted); font-weight: 700; font-size: 12px; }
+    .tab.active { border-color: var(--green); color: var(--ink); }
+    .analysis-content { height: 600px; overflow: auto; padding: 19px; }
+    .analysis-content h4 { margin: 22px 0 9px; color: var(--green-soft); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+    .analysis-content h4:first-child { margin-top: 0; }
+    .thesis { margin: 0; color: var(--ink); line-height: 1.55; }
+    .analysis-item { border-left: 2px solid var(--line); margin: 9px 0; padding: 9px 12px; background: #1a211d; font-size: 12px; line-height: 1.5; }
+    .analysis-item strong { color: var(--green-soft); }
+    .analysis-item.fallacy { border-left-color: var(--red); }
+    .analysis-item.fact { border-left-color: var(--amber); }
+    .badge { display: inline-block; border-radius: 3px; padding: 2px 5px; margin-left: 4px; background: #2d3830; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .badge.strong { color: var(--green-soft); }
+    .badge.medium { color: var(--amber); }
+    .badge.weak { color: var(--red); }
+    .score-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin: 17px 0 20px; }
+    .score { border: 1px solid var(--line); border-radius: 5px; padding: 10px; background: var(--panel-2); }
+    .score b { display: block; font-size: 22px; }
+    .score small { color: var(--muted); font-size: 10px; }
+    .score.green b { color: var(--green); } .score.amber b { color: var(--amber); } .score.red b { color: var(--red); }
+    .settings-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 16px; }
+    .form-panel { max-width: 760px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 24px; }
+    label { display: block; margin: 0 0 7px; color: var(--muted); font-size: 12px; font-weight: 750; }
+    input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 5px; outline: 0; background: #101511; color: var(--ink); padding: 11px 12px; }
+    input:focus, textarea:focus { border-color: var(--green); box-shadow: 0 0 0 2px rgba(30,215,96,.12); }
+    textarea { min-height: 105px; resize: vertical; }
+    .field { margin-bottom: 20px; }
+    .field-help { margin: 7px 0 0; color: var(--faint); font-size: 11px; line-height: 1.5; }
+    .notice { border-left: 2px solid var(--amber); margin: 0 0 20px; padding: 10px 12px; background: rgba(255,200,87,.08); color: #f8d98d; font-size: 12px; }
+    .speaker-input { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .speaker-input input { flex: 1; }
+    .icon-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-2); color: var(--muted); }
+    .icon-button:hover { color: var(--red); border-color: var(--red); }
+    .toggle-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding-top: 18px; }
+    .toggle { position: relative; width: 39px; height: 22px; flex: 0 0 auto; }
+    .toggle input { position: absolute; opacity: 0; }
+    .toggle span { display: block; width: 39px; height: 22px; border-radius: 20px; background: var(--line); transition: .2s; }
+    .toggle span:after { content: ''; display: block; width: 16px; height: 16px; border-radius: 50%; margin: 3px; background: var(--muted); transition: .2s; }
+    .toggle input:checked + span { background: var(--green); }
+    .toggle input:checked + span:after { transform: translateX(17px); background: #06110a; }
+    .shortcut { color: var(--faint); font-size: 11px; }
+    .toast { position: fixed; right: 25px; bottom: 23px; z-index: 5; display: none; max-width: 380px; border: 1px solid var(--line); border-radius: 6px; padding: 13px 16px; background: #202b23; box-shadow: var(--shadow); color: var(--ink); font-size: 12px; }
+    .toast.show { display: block; animation: rise .2s ease-out; }
+    .modal-backdrop { position: fixed; inset: 0; z-index: 10; display: none; place-items: center; padding: 24px; background: rgba(0,0,0,.7); }
+    .modal-backdrop.open { display: grid; }
+    .modal { width: min(680px, 100%); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); padding: 22px; }
+    .modal h3 { margin-bottom: 7px; font-size: 20px; }
+    .modal p { margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+    .modal textarea { min-height: 210px; margin-bottom: 14px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @media print { body { min-width: 0; background: white; color: #111; } .sidebar, .topbar, .controls, .analysis-tabs, .settings-view { display: none !important; } .app { display: block; } .content { padding: 0; } .view { display: block !important; } .workspace { display: block; } .panel { border: 0; box-shadow: none; } .panel-head { color: #111; } .transcript, .analysis-content { height: auto; overflow: visible; } }
+
+    /* Direction Spotify : noir profond, vert vif et surfaces superposées. */
+    :root {
+      --ink: #ffffff;
+      --muted: #b3b3b3;
+      --faint: #6f6f6f;
+      --bg: #000000;
+      --panel: #181818;
+      --panel-2: #232323;
+      --line: #2e2e2e;
+      --green: #1ed760;
+      --green-soft: #b8f8ce;
+      --red: #f15e6c;
+      --amber: #ffa42b;
+      --shadow: 0 16px 36px rgba(0, 0, 0, .35);
+    }
+    html, body { background: var(--bg); color: var(--ink); font-family: Figtree, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { min-width: 0; }
+    .app { grid-template-columns: 250px minmax(0, 1fr); gap: 8px; padding: 8px; background: #000; }
+    .sidebar { border: 0; border-radius: 8px; padding: 18px 12px; background: #121212; }
+    .brand { padding: 8px 12px 30px; }
+    .brand-mark { width: 36px; height: 36px; background: var(--green); color: #000; box-shadow: none; }
+    .brand h1 { color: #fff; letter-spacing: -.04em; }
+    .brand p, .side-bottom { color: var(--muted); }
+    .nav-label { color: var(--muted); }
+    .nav button { color: var(--muted); border-radius: 6px; }
+    .nav button:hover, .nav button.active { background: var(--panel-2); color: #fff; }
+    .nav button.active { box-shadow: none; color: #fff; }
+    .nav-icon, .nav button.active .nav-icon { color: var(--green); }
+    .side-bottom { border-top-color: var(--line); }
+    .main { background: #121212; border-radius: 8px; overflow: hidden; }
+    .topbar { min-height: 70px; padding: 0 28px; background: #121212; border-bottom-color: var(--line); }
+    .eyebrow { color: var(--green); }
+    .top-actions { gap: 8px; }
+    .content { padding: 24px 28px 34px; }
+    h2 { color: #fff; }
+    .lede { color: var(--muted); }
+    .panel, .form-panel { border-color: transparent; border-radius: 8px; background: var(--panel); box-shadow: none; }
+    .panel-head { border-bottom-color: var(--line); }
+    .panel-title { color: #fff; }
+    .live-dot { background: var(--faint); }
+    .live-dot.on { background: var(--green); box-shadow: 0 0 0 4px rgba(30,215,96,.12); }
+    .speaker-btn { border-color: #3a3a3a; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+    .speaker-btn:hover { border-color: var(--green); color: #fff; background: #2a2a2a; }
+    .speaker-btn.active { border-color: var(--green); background: var(--green); color: #000; }
+    .transcript { background: var(--panel); }
+    .message { border-left-color: transparent; border-radius: 6px; }
+    .message:hover { border-color: var(--green); background: var(--panel-2); }
+    .message-meta { color: var(--muted); }
+    .message-meta strong { color: var(--green); }
+    .message-text { color: #fff; }
+    .message.interim .message-text { color: var(--faint); }
+    mark.fallacy { background: rgba(241,94,108,.28); border-bottom-color: var(--red); color: #fff; }
+    mark.strong { background: rgba(30,215,96,.22); border-bottom-color: var(--green); color: #fff; }
+    .controls { border-top-color: var(--line); }
+    .button { border-color: #535353; border-radius: 999px; background: transparent; color: #fff; }
+    .button:hover { border-color: #fff; background: var(--panel-2); }
+    .button.primary { border-color: var(--green); background: var(--green); color: #000; box-shadow: none; }
+    .button.primary:hover { background: #3be477; color: #000; }
+    .button.danger { color: #ffb3bb; }
+    .analysis-tabs { border-bottom-color: var(--line); }
+    .tab { color: var(--muted); }
+    .tab.active { border-color: var(--green); color: #fff; }
+    .analysis-content h4 { color: var(--muted); }
+    .thesis { color: #fff; }
+    .analysis-item { border-left-color: #535353; background: var(--panel-2); }
+    .analysis-item strong { color: #fff; }
+    .analysis-item.fallacy { border-left-color: var(--red); }
+    .analysis-item.fact { border-left-color: var(--amber); }
+    .badge { background: #3a3a3a; color: var(--muted); }
+    .badge.strong { background: rgba(30,215,96,.2); color: var(--green); }
+    .badge.medium { background: rgba(255,164,43,.2); color: var(--amber); }
+    .badge.weak { background: rgba(241,94,108,.2); color: var(--red); }
+    .score { border-color: var(--line); background: var(--panel-2); }
+    .score.green b { color: var(--green); } .score.amber b { color: var(--amber); } .score.red b { color: var(--red); }
+    input, textarea { border-color: #535353; background: var(--panel-2); color: #fff; }
+    input:focus, textarea:focus { border-color: var(--green); box-shadow: 0 0 0 2px rgba(30,215,96,.12); }
+    label, .field-help, .shortcut { color: var(--muted); }
+    .notice { border-left-color: var(--green); background: rgba(30,215,96,.12); color: #b8f8ce; }
+    .icon-button { border-color: #535353; background: var(--panel-2); color: var(--muted); }
+    .toggle-line { border-top-color: var(--line); }
+    .toggle span { background: #535353; }
+    .toggle input:checked + span { background: var(--green); }
+    .toggle input:checked + span:after { background: #000; }
+    .toast { border-color: #535353; background: #2a2a2a; color: #fff; box-shadow: var(--shadow); }
+    .modal-backdrop { background: rgba(0,0,0,.72); }
+    .modal { border-color: #535353; background: #282828; }
+    .modal h3 { color: #fff; }
+    .modal p { color: var(--muted); }
+    @media (max-width: 820px) {
+      body { min-width: 0; }
+      .app { display: block; padding: 0; }
+      .sidebar { border-radius: 0; border-bottom: 1px solid var(--line); padding: 14px; }
+      .brand { display: flex; align-items: center; gap: 12px; padding: 0 4px 14px; }
+      .brand-mark { margin: 0; }
+      .brand p, .nav-label, .side-bottom { display: none; }
+      .nav { display: inline-flex; width: auto; margin-right: 5px; padding: 9px 12px; }
+      .main { min-height: calc(100vh - 120px); border-radius: 0; }
+      .topbar { flex-wrap: wrap; gap: 10px; padding: 14px 15px; }
+      .top-actions { flex-wrap: wrap; }
+      .content { padding: 22px 15px 30px; }
+      .workspace { grid-template-columns: 1fr; min-height: 0; }
+      .transcript, .analysis-content { height: 430px; }
+    }
+      /* Finition premium : blocs de lecture rapides et identité balance. */
+      .brand-mark { position: relative; width: 42px; height: 42px; font-size: 23px; background: #1ed760; box-shadow: 0 0 0 6px rgba(30,215,96,.1); }
+      .brand-mark::after { content: ''; position: absolute; inset: -7px; border: 1px solid rgba(30,215,96,.3); border-radius: 50%; }
+      .brand h1 { font-size: 26px; }
+      .topbar { position: relative; }
+      .topbar::before { content: ''; position: absolute; left: 0; top: 0; width: 110px; height: 2px; background: linear-gradient(90deg, var(--green), transparent); }
+      .eyebrow { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid rgba(30,215,96,.25); border-radius: 999px; background: rgba(30,215,96,.08); }
+      .eyebrow::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(30,215,96,.1); }
+      .workspace { gap: 20px; }
+      .panel { position: relative; border: 1px solid #292929; box-shadow: 0 14px 30px rgba(0,0,0,.18); }
+      .panel::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: linear-gradient(90deg, var(--green), transparent 75%); opacity: .75; }
+      .panel-head { min-height: 68px; padding: 16px 20px; }
+      .panel-title::before { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; background: #262626; color: var(--green); font-size: 15px; }
+      .panel:first-child .panel-title::before { content: '☷'; }
+      .panel:nth-child(2) .panel-title::before { content: '✦'; }
+      .speaker-strip { margin: 0 -4px 20px; padding: 0 4px 2px; }
+      .speaker-btn { min-height: 43px; transition: transform .18s ease, background .18s ease, border-color .18s ease; }
+      .speaker-btn:hover { transform: translateY(-2px); }
+      .speaker-btn.active { box-shadow: 0 7px 18px rgba(30,215,96,.18); }
+      .message { margin-bottom: 10px; padding: 11px 13px 12px; background: #1b1b1b; border-left-width: 3px; transition: transform .18s ease, background .18s ease; }
+      .message:hover { transform: translateX(3px); }
+      .message-meta strong { display: inline-flex; align-items: center; gap: 5px; }
+      .message-meta strong::before { content: '◉'; font-size: 8px; color: var(--green); }
+      .analysis-tabs { gap: 8px; padding: 12px 20px 0; }
+      .tab { border: 1px solid transparent; border-radius: 999px; padding: 9px 13px 8px; transition: background .18s ease, color .18s ease, border-color .18s ease; }
+      .tab:hover { background: #242424; color: #fff; }
+      .tab.active { border-color: var(--green); background: rgba(30,215,96,.1); }
+      .analysis-item { position: relative; overflow: hidden; border-left-width: 3px; padding: 13px 15px; border-radius: 7px; transition: transform .18s ease, background .18s ease; }
+      .analysis-item::after { content: '↗'; position: absolute; right: 12px; top: 12px; color: var(--green); font-size: 14px; }
+      .analysis-item.fallacy::after { content: '⚠'; color: var(--red); }
+      .analysis-item.fact::after { content: '⌕'; color: var(--amber); }
+      .analysis-item:hover { transform: translateY(-2px); background: #2a2a2a; }
+      .analysis-item strong { padding-right: 22px; }
+      .score { position: relative; overflow: hidden; min-height: 78px; border-radius: 8px; }
+      .score::after { content: ''; position: absolute; right: -15px; bottom: -20px; width: 58px; height: 58px; border: 1px solid currentColor; border-radius: 50%; opacity: .14; }
+      .score b { font-size: 25px; }
+      .button { transition: transform .16s ease, background .16s ease, border-color .16s ease; }
+      .button:hover:not(:disabled) { transform: translateY(-1px); }
+      .modal { border-top: 2px solid var(--green); }
+      /* Arène d'idées : une carte mentale en mouvement, au-dessus du débat. */
+      .idea-arena { position: relative; height: 174px; margin: -8px 0 24px; overflow: hidden; border-bottom: 1px solid #2e2e2e; background: #101010; }
+      .idea-arena::before { content: ''; position: absolute; inset: 0; opacity: .34; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 28px 28px; mask-image: linear-gradient(90deg, transparent, #000 17%, #000 83%, transparent); }
+      .idea-arena::after { content: ''; position: absolute; left: 50%; top: 50%; width: 260px; height: 120px; transform: translate(-50%, -50%); border: 1px solid rgba(30,215,96,.2); border-radius: 50%; box-shadow: 0 0 50px rgba(30,215,96,.05); }
+      .arena-core { position: absolute; left: 50%; top: 50%; z-index: 3; display: grid; place-items: center; width: 72px; height: 72px; transform: translate(-50%, -50%); border: 1px solid var(--green); border-radius: 50%; background: #171717; box-shadow: 0 0 0 8px rgba(30,215,96,.06), 0 0 32px rgba(30,215,96,.16); }
+      .arena-balance { color: var(--green); font-size: 32px; line-height: 1; }
+      .arena-core small { position: absolute; top: 78px; color: var(--green); font-size: 8px; letter-spacing: .18em; }
+      .arena-line { position: absolute; z-index: 1; height: 1px; transform-origin: left center; background: linear-gradient(90deg, rgba(30,215,96,.7), rgba(30,215,96,0)); opacity: .7; }
+      .line-one { left: 19%; top: 39%; width: 32%; transform: rotate(11deg); }
+      .line-two { left: 49%; top: 51%; width: 32%; transform: rotate(-17deg); }
+      .line-three { left: 50%; top: 52%; width: 27%; transform: rotate(29deg); opacity: .38; }
+      .arena-node { position: absolute; z-index: 4; display: grid; gap: 2px; min-width: 92px; padding: 7px 10px; border-left: 2px solid var(--node-color); background: rgba(28,28,28,.94); box-shadow: 0 7px 16px rgba(0,0,0,.28); animation: ideaFloat 5s ease-in-out infinite; }
+      .arena-node::before { content: ''; position: absolute; left: -5px; top: 50%; width: 7px; height: 7px; transform: translateY(-50%); border: 1px solid var(--node-color); border-radius: 50%; background: #101010; }
+      .arena-node span { color: var(--node-color); font-size: 8px; font-weight: 800; letter-spacing: .13em; }
+      .arena-node b { color: #d9d9d9; font-size: 11px; font-weight: 500; }
+      .node-thesis { --node-color: #1ed760; left: 8%; top: 26%; animation-delay: -.6s; }
+      .node-argument { --node-color: #6d9cff; left: 28%; bottom: 13%; animation-delay: -2.1s; }
+      .node-objection { --node-color: #ffc864; right: 8%; top: 20%; animation-delay: -1.4s; }
+      .node-fallacy { --node-color: #f15e6c; right: 25%; bottom: 10%; animation-delay: -3s; }
+      .arena-caption { position: absolute; left: 50%; bottom: 8px; z-index: 5; transform: translateX(-50%); color: #6f6f6f; font-size: 10px; letter-spacing: .08em; white-space: nowrap; text-transform: uppercase; }
+      .arena-caption i { margin: 0 6px; color: var(--green); font-style: normal; }
+      @keyframes ideaFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+      @media (max-width: 820px) { .idea-arena { height: 150px; } .node-objection { right: 2%; } .node-thesis { left: 2%; } .node-fallacy { right: 8%; } .arena-caption { font-size: 8px; } }
+
+      /* Signature visuelle de l'analyse : des fiches de preuve, pas des cartes à bordures. */
+      .analysis-item { display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 12px; border: 0; border-left: 0; border-radius: 10px; padding: 15px 17px 15px 13px; background: #202020; box-shadow: inset 0 1px rgba(255,255,255,.04), 0 7px 18px rgba(0,0,0,.12); }
+      .analysis-item::before { content: '↗'; grid-row: 1 / span 8; display: grid; place-items: center; width: 27px; height: 27px; border-radius: 50%; background: #2b2b2b; color: var(--green); font-size: 14px; }
+      .analysis-item::after { top: 15px; right: 15px; color: #767676; font-size: 12px; }
+      .analysis-item.fallacy, .analysis-item.fact { border-left: 0; background: #202020; }
+      .analysis-item.fallacy::before { content: '⚠'; color: var(--red); background: rgba(241,94,108,.12); }
+      .analysis-item.fact::before { content: '⌕'; color: var(--amber); background: rgba(255,164,43,.12); }
+      .analysis-item strong, .analysis-item br, .analysis-item span, .analysis-item > * { grid-column: 2; }
+      .analysis-item strong { font-size: 13px; line-height: 1.45; }
+      .analysis-item .badge { width: max-content; }
+      .analysis-item:hover { transform: translateY(-2px); background: #272727; }
+      .analysis-item blockquote { margin: 8px 0 3px; padding-left: 12px; border-left: 0; color: #c4c4c4; font-family: Georgia, serif; font-size: 14px; line-height: 1.5; }
+      .analysis-item.fallacy blockquote { color: #f0b9c4; }
+      .analysis-item .detail { color: #a8a8a8; }
+      .analysis-content h4 { margin-top: 28px; color: #858585; font-size: 10px; letter-spacing: .16em; }
+      .analysis-content h4::before { content: '///'; margin-right: 8px; color: var(--green); letter-spacing: -.1em; }
+      .message mark, mark.fallacy, mark.strong { background: transparent; color: inherit; border: 0; border-radius: 0; padding: 0 2px; box-shadow: inset 0 -7px 0 rgba(30,215,96,.16); }
+      .message mark.fallacy { box-shadow: inset 0 -7px 0 rgba(241,94,108,.22); text-decoration: underline wavy rgba(241,94,108,.85); text-underline-offset: 4px; }
+      .message mark.strong { box-shadow: inset 0 -7px 0 rgba(30,215,96,.2); text-decoration: underline solid rgba(30,215,96,.8); text-underline-offset: 4px; }
+      .score { border: 0; background: #202020; box-shadow: inset 0 1px rgba(255,255,255,.04); }
+      .score::after { display: none; }
+      /* Les fiches restent compactes tant qu'on ne les ouvre pas. */
+      .analysis-item { max-height: 76px; cursor: pointer; overflow: hidden; transition: max-height .28s ease, transform .18s ease, background .18s ease; }
+      .analysis-item.expanded { max-height: 520px; overflow: visible; }
+      .analysis-item blockquote, .analysis-item .detail, .analysis-item ul { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .25s ease, opacity .2s ease, margin .25s ease; }
+      .analysis-item.expanded blockquote, .analysis-item.expanded .detail, .analysis-item.expanded ul { max-height: 280px; opacity: 1; }
+      .analysis-item:not(.expanded)::before { transform: scale(.86); opacity: .8; }
+      .analysis-item.expanded::before { box-shadow: 0 0 0 5px rgba(30,215,96,.08); }
+      /* La transcription reste un fil de conversation, sans cartes lourdes. */
+      .message { background: transparent; border: 0; border-bottom: 1px solid #2a2a2a; border-radius: 0; margin: 0; padding: 10px 4px; transition: background .18s ease, padding-left .18s ease; }
+      .message:hover { transform: none; border-color: #2a2a2a; border-radius: 6px; padding-left: 12px; background: #1b1b1b; }
+      .message:last-child { border-bottom-color: transparent; }
+      .message-text { font-size: 14px; }
+      .analysis-filters { display: flex; gap: 7px; flex-wrap: wrap; padding: 14px 20px 2px; }
+      .filter-chip { border: 1px solid #383838; border-radius: 999px; padding: 7px 11px; background: #202020; color: #9b9b9b; font-size: 11px; font-weight: 800; cursor: pointer; transition: .18s ease; }
+      .filter-chip:hover { color: #fff; border-color: #777; transform: translateY(-1px); }
+      .filter-chip.active { border-color: var(--green); background: rgba(30,215,96,.13); color: var(--green); }
+      .analysis-item.filtered-out, .analysis-content .thesis.filtered-out { display: none; }
+      .message { cursor: pointer; }
+      .message.focused { background: transparent; box-shadow: none; padding-left: 13px; }
+      .message.focused .message-text { color: #fff; }
+      .message.focused .message-meta strong::before { content: '✦'; }
+      .message { max-height: 72px; overflow: hidden; border-bottom: 1px solid rgba(255,255,255,.1); background: transparent !important; box-shadow: none !important; border-radius: 0; transition: max-height .38s cubic-bezier(.2,.75,.25,1), padding .2s ease; }
+      .message.expanded { max-height: 300px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #555 transparent; }
+      .message.expanded::-webkit-scrollbar { width: 6px; }
+      .message.expanded::-webkit-scrollbar-thumb { border: 0; background: #555; }
+      /* Mouvement global : chaque surface répond comme un instrument du débat. */
+      .panel { transition: transform .28s cubic-bezier(.2,.75,.25,1), box-shadow .28s ease, border-color .28s ease; }
+      .panel:hover { transform: translateY(-2px); border-color: #3b3b3b; box-shadow: 0 18px 38px rgba(0,0,0,.28); }
+      .nav button[data-view] { position: relative; min-height: 58px; margin-bottom: 8px; padding: 11px 12px 11px 10px; border: 1px solid transparent; background: transparent; transition: transform .2s ease, background .2s ease, border-color .2s ease; }
+      .nav button[data-view]::after { display: block; margin-left: auto; color: #6f6f6f; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .nav button[data-view="debate"]::after { content: 'LIVE'; }
+      .nav button[data-view="settings"]::after { content: 'SETUP'; }
+      .nav button[data-view]:hover { transform: translateX(3px); border-color: #353535; background: #1d1d1d; }
+      .nav button[data-view].active { border-color: rgba(30,215,96,.35); background: linear-gradient(105deg, rgba(30,215,96,.16), rgba(30,215,96,.035)); box-shadow: inset 3px 0 var(--green), 0 8px 20px rgba(0,0,0,.16); }
+      .nav button[data-view].active::after { color: var(--green); }
+      .nav button[data-view] .nav-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; background: #242424; color: #a7a7a7; font-size: 17px; transition: transform .2s ease, background .2s ease, color .2s ease; }
+      .nav button[data-view].active .nav-icon { background: var(--green); color: #000; transform: rotate(-4deg) scale(1.04); }
+      .panel:nth-child(2) .panel-title::before { content: none; width: 0; }
+      .debate-library { min-height: 0; margin-top: 22px; }
+      .library-title { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 8px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+      .library-title button { width: 23px; height: 23px; border-radius: 50%; color: var(--muted); font-size: 16px; line-height: 1; }
+      .library-title button:hover { background: var(--panel-2); color: var(--green); }
+      #debateHistory { max-height: 230px; overflow-y: auto; padding-right: 2px; }
+      .history-empty { padding: 8px 12px; color: var(--faint); font-size: 11px; line-height: 1.4; }
+      .history-item { display: flex; align-items: center; gap: 9px; width: 100%; margin-bottom: 4px; padding: 9px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); text-align: left; cursor: pointer; transition: .18s ease; }
+      .history-item:hover { background: var(--panel-2); color: #fff; transform: translateX(2px); }
+      .history-item.active { border-color: rgba(30,215,96,.3); background: rgba(30,215,96,.1); color: #fff; }
+      .history-icon { display: grid; width: 25px; height: 25px; flex: 0 0 auto; place-items: center; border-radius: 6px; background: #242424; color: var(--green); font-size: 12px; }
+      .history-copy { min-width: 0; }
+      .history-name, .history-date { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .history-name { font-size: 11px; font-weight: 750; }
+      .history-date { margin-top: 2px; color: var(--faint); font-size: 9px; }
+      .arena-node { cursor: pointer; user-select: none; transition: transform .25s cubic-bezier(.2,.75,.25,1), background .2s ease, box-shadow .2s ease; }
+      .arena-node:hover, .arena-node.selected { transform: translateY(-6px) scale(1.04); background: #242424; box-shadow: 0 0 0 1px var(--node-color), 0 10px 22px rgba(0,0,0,.35); }
+      .arena-node:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; }
+      .arena-core { cursor: pointer; transition: transform .3s ease, box-shadow .3s ease; }
+      .arena-core:hover { transform: translate(-50%, -50%) scale(1.08) rotate(-3deg); box-shadow: 0 0 0 10px rgba(30,215,96,.08), 0 0 45px rgba(30,215,96,.24); }
+      .arena-balance { transition: transform .3s ease; }
+      .arena-core:hover .arena-balance { transform: rotate(6deg); }
+      .score { transition: transform .22s ease, background .22s ease; }
+      .score:hover { transform: translateY(-4px); background: #2a2a2a; }
+      .filter-chip, .tab, .speaker-btn { will-change: transform; }
+      .analysis-item.expanded { animation: ideaOpen .32s ease-out; }
+      @keyframes ideaOpen { from { opacity: .55; transform: scale(.985); } to { opacity: 1; transform: scale(1); } }
+      .idea-arena:has(.arena-node.selected) .arena-core { animation: corePulse 1.6s ease-in-out infinite; }
+      @keyframes corePulse { 50% { box-shadow: 0 0 0 12px rgba(30,215,96,.05), 0 0 38px rgba(30,215,96,.22); } }
+      .message.expanded .message-text { animation: messageReveal .3s ease-out; }
+      .message:hover, .message.expanded, .message.expanded:hover { background: transparent !important; box-shadow: none !important; }
+      .message::before { content: ''; position: absolute; left: 0; top: 18px; width: 5px; height: 5px; border-radius: 50%; background: #555; }
+      .message.focused::before { background: var(--green); box-shadow: 0 0 0 4px rgba(30,215,96,.1); }
+      @keyframes messageReveal { from { opacity: .35; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+      .analysis-content.has-filter .analysis-item, .analysis-content.has-filter .thesis { animation: filterIn .18s ease-out; }
+      @keyframes filterIn { from { opacity: .35; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+    </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark" aria-label="Balance de justice">⚖</span><h1>Arbitre</h1><p>Le débat, sous la loupe.</p></div>
+      <div class="nav-label">Espace de travail</div>
+      <nav class="nav">
+        <button class="active" data-view="debate"><span class="nav-icon">🎙</span>Débat en cours</button>
+        <button data-view="settings"><span class="nav-icon">⚙</span>Configuration</button>
+      </nav>
+      <div class="debate-library"><div class="library-title"><span>Conversations</span><button id="newDebateSide" title="Nouveau débat">＋</button></div><div id="debateHistory"><div class="history-empty">Aucun débat sauvegardé</div></div></div>
+      <div class="side-bottom">Analyse impartiale<br>Transcription locale dans Chrome</div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><span class="eyebrow" id="headerStatus">Session prête</span><div class="top-actions"><button class="button" id="exportBtn">↓ Exporter .txt</button><button class="button" id="printBtn">⎙ Imprimer le rapport</button><button class="button danger" id="newBtn">＋ Nouveau débat</button></div></header>
+      <div class="content">
+        <section class="view active" id="debateView">
+          <div class="idea-arena" aria-label="Espace visuel des idées du débat">
+            <div class="arena-line line-one"></div><div class="arena-line line-two"></div><div class="arena-line line-three"></div>
+            <div class="arena-node node-thesis" data-idea="thesis" role="button" tabindex="0"><span>THÈSE</span><b>position</b></div>
+            <div class="arena-node node-argument" data-idea="argument" role="button" tabindex="0"><span>ARGUMENT</span><b>preuve</b></div>
+            <div class="arena-node node-objection" data-idea="objection" role="button" tabindex="0"><span>OBJECTION</span><b>réponse</b></div>
+            <div class="arena-node node-fallacy" data-idea="fallacy" role="button" tabindex="0"><span>SOPHISME</span><b>vigilance</b></div>
+            <div class="arena-core"><span class="arena-balance">⚖</span><small>ARBITRE</small></div>
+            <div class="arena-caption">Le champ des idées <i>•</i> chaque voix laisse une trace</div>
+          </div>
+          <h2 id="debateTitle">Débat sans sujet</h2><p class="lede">Sélectionnez un orateur, démarrez le micro, puis laissez Arbitre structurer les échanges et repérer les raisonnements fragiles.</p>
+          <div class="workspace">
+            <section class="panel">
+              <div class="panel-head"><div class="panel-title"><span class="live-dot" id="liveDot"></span>Transcription</div><span class="shortcut">Touches 1 à 4 : orateur</span></div>
+              <div class="panel-body"><div class="speaker-strip" id="speakerButtons"></div><div class="transcript" id="transcript"><div class="empty">Aucune intervention pour le moment.<br>La conversation apparaîtra ici.</div></div><div class="controls"><div class="controls-row"><button class="button primary" id="startBtn">● Démarrer</button><button class="button" id="pauseBtn" disabled>Ⅱ Pause</button><button class="button danger" id="stopBtn" disabled>■ Arrêter</button><button class="button" id="pasteBtn">📋 Coller une transcription</button><button class="button" id="youtubeBtn">▶ Importer YouTube</button><button class="button" id="mediaBtn">🎧 Analyser audio/vidéo</button><input class="file-input" id="mediaFile" type="file" accept="audio/*,video/*"></div><div class="status" id="speechStatus">Micro en attente.</div></div></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head"><div class="panel-title">⚖ Analyse</div><button class="button primary" id="analyzeBtn">⚖ Analyser</button></div>
+              <div class="analysis-filters" id="analysisFilters"><button class="filter-chip active" data-filter="all">Tout</button><button class="filter-chip" data-filter="thesis">Thèse</button><button class="filter-chip" data-filter="argument">Arguments</button><button class="filter-chip" data-filter="objection">Objections</button><button class="filter-chip" data-filter="fallacy">Sophismes</button><button class="filter-chip" data-filter="fact">Faits</button></div><div class="analysis-tabs" id="analysisTabs"></div><div class="analysis-content" id="analysisContent"><div class="empty">L'analyse apparaîtra ici.<br>Ajoutez une transcription, puis cliquez sur Analyser.</div></div>
+            </section>
+          </div>
+        </section>
+        <section class="view settings-view" id="settingsView">
+          <h2>Configuration</h2><p class="lede">Préparez votre session. Les réglages sont conservés sur cet ordinateur pour la prochaine ouverture.</p>
+          <div class="settings-grid"><div class="form-panel"><div class="notice">Les clés sont stockées uniquement sur cet ordinateur.</div><div class="field"><label for="apiKey">Clé API Google AI (analyse)</label><input id="apiKey" type="password" placeholder="AIza..."><p class="field-help">Analyse les arguments et les sophismes.</p></div><div class="field"><label for="groqKey">Clé API Groq (transcription audio)</label><input id="groqKey" type="password" placeholder="gsk_..."><p class="field-help">Transcrit l’audio YouTube avant l’analyse.</p></div><div class="field"><label for="topic">Sujet du débat</label><input id="topic" placeholder="Ex. Faut-il interdire les voitures en centre-ville ?"></div><div class="field"><label>Orateurs <span id="speakerCount">(2/4)</span></label><div id="speakerInputs"></div><button class="button" id="addSpeakerBtn">＋ Ajouter un orateur</button></div><div class="toggle-line"><div><label style="margin:0;color:var(--ink)">Analyse automatique toutes les 2 minutes</label><p class="field-help">Analyse uniquement les nouvelles interventions avec le contexte précédent.</p></div><label class="toggle"><input id="autoAnalyze" type="checkbox"><span></span></label></div><br><button class="button primary" id="saveSettingsBtn">Enregistrer la configuration</button></div></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="modal-backdrop" id="pasteModal" role="dialog" aria-modal="true" aria-labelledby="pasteTitle">
+    <div class="modal">
+      <h3 id="pasteTitle">Coller une transcription</h3>
+      <p>Une intervention par ligne, au format « Nom : texte ».</p>
+      <textarea id="pasteText" placeholder="Orateur 1 : Première intervention...&#10;Orateur 2 : Réponse..." autofocus></textarea>
+      <div class="modal-actions"><button class="button" id="cancelPasteBtn">Annuler</button><button class="button primary" id="importPasteBtn">Importer la transcription</button></div>
+    </div>
+  </div>
+  <div class="modal-backdrop" id="youtubeModal" role="dialog" aria-modal="true" aria-labelledby="youtubeTitle">
+    <div class="modal">
+      <h3 id="youtubeTitle">Importer un débat YouTube</h3>
+      <p>Arbitre va chercher les sous-titres publics français de la vidéo. La vidéo doit proposer une transcription ou des sous-titres automatiques.</p>
+      <input id="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..."><p class="field-help">L’audio seul sans sous-titres n’est pas accessible directement depuis un fichier HTML local.</p>
+      <div class="modal-actions"><button class="button" id="cancelYoutubeBtn">Annuler</button><button class="button primary" id="importYoutubeBtn">Importer les sous-titres</button></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script>
+    // Prompt demandé pour garantir une analyse structurée et prudente.
+    const SYSTEM_PROMPT = `Tu es un expert en logique, rhétorique et argumentation. Tu analyses la transcription d'un débat oral en français. La transcription est automatique : elle peut contenir des erreurs de reconnaissance vocale, ne les considère pas comme des fautes de raisonnement.
+
+Pour chaque intervention, identifie :
+1. Les ARGUMENTS : la thèse défendue, les prémisses, le type d'argument (déductif, inductif, par analogie, par l'exemple, par l'autorité, par les conséquences, statistique), et sa solidité (forte, moyenne, faible) avec une justification courte.
+2. Les SOPHISMES : uniquement s'ils sont clairement présents. Catalogue de référence : attaque personnelle (ad hominem), homme de paille, fausse alternative, pente glissante, appel à l'autorité non pertinente, appel à la popularité, appel à l'émotion, généralisation hâtive, corrélation n'est pas causalité, raisonnement circulaire, diversion (hareng rouge), tu quoque (toi aussi), charge de la preuve inversée, appel à la tradition, appel à la nature, faux dilemme, question piège, déplacement des critères, sophisme du juste milieu.
+   Pour chaque sophisme : nom, citation exacte de l'extrait concerné, explication simple (2 phrases max, compréhensible par un non-spécialiste), niveau de confiance (élevé, moyen, faible).
+3. Les AFFIRMATIONS FACTUELLES à vérifier (chiffres, dates, faits), sans juger si elles sont vraies.
+
+Règles :
+- Sois impartial : applique le même niveau d'exigence à tous les orateurs, quel que soit leur point de vue.
+- Ne signale pas un sophisme en cas de doute : mieux vaut en rater un que d'en inventer un.
+- Une affirmation forte ou une émotion n'est pas automatiquement un sophisme.
+
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ou après, sans balises markdown, selon ce format :
+{
+  "orateurs": [{"nom":"string","these_principale":"string","arguments":[{"extrait":"string","these":"string","premisses":["string"],"type":"string","solidite":"forte|moyenne|faible","justification":"string"}],"sophismes":[{"nom":"string","extrait":"string","explication":"string","confiance":"élevé|moyen|faible"}],"faits_a_verifier":["string"]}],
+  "synthese":"string (5 phrases max : points de désaccord, qualité globale du débat)"
+}`;
+    const storageKey = 'arbitre-session-v1';
+    const historyKey = 'arbitre-conversations-v1';
+    const settingsKey = 'arbitre-settings-v1';
+    const state = { debateId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), speakers: ['Orateur 1', 'Orateur 2'], topic: '', entries: [], analysis: null, lastAnalyzedIndex: 0, activeSpeaker: 0, recognition: null, listening: false, paused: false, manuallyStopped: false, interim: '' };
+    const $ = id => document.getElementById(id);
+    const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const time = date => new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(date);
+    function notify(message) { const toast = $('toast'); toast.textContent = message; toast.classList.add('show'); clearTimeout(notify.timer); notify.timer = setTimeout(() => toast.classList.remove('show'), 3600); }
+    function saveSession() { const snapshot = { debateId: state.debateId, topic: state.topic, speakers: state.speakers, entries: state.entries, analysis: state.analysis, lastAnalyzedIndex: state.lastAnalyzedIndex }; localStorage.setItem(storageKey, JSON.stringify(snapshot)); const history = JSON.parse(localStorage.getItem(historyKey) || '[]').filter(item => item.debateId !== state.debateId); history.unshift({ ...snapshot, updatedAt: Date.now() }); localStorage.setItem(historyKey, JSON.stringify(history.slice(0, 20))); renderHistory(); }
+    function loadData() { try { const saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); if (saved) Object.assign(state, saved); const settings = JSON.parse(localStorage.getItem(settingsKey) || 'null'); if (settings) { state.speakers = settings.speakers || state.speakers; state.topic = settings.topic || state.topic; $('apiKey').value = settings.apiKey || ''; $('groqKey').value = settings.groqKey || ''; $('autoAnalyze').checked = !!settings.autoAnalyze; } } catch (error) { notify('La session sauvegardée est illisible.'); } }
+    function renderHistory() { const items = JSON.parse(localStorage.getItem(historyKey) || '[]'); $('debateHistory').innerHTML = items.length ? items.map(item => `<button class="history-item ${item.debateId === state.debateId ? 'active' : ''}" data-history-id="${escapeHtml(item.debateId)}"><span class="history-icon">⚖</span><span class="history-copy"><span class="history-name">${escapeHtml(item.topic || 'Débat sans sujet')}</span><span class="history-date">${new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(item.updatedAt)}</span></span></button>`).join('') : '<div class="history-empty">Aucun débat sauvegardé</div>'; }
+    function openHistory(debateId) { const item = JSON.parse(localStorage.getItem(historyKey) || '[]').find(entry => entry.debateId === debateId); if (!item) return; Object.assign(state, item); saveSession(); $('debateTitle').textContent = state.topic || 'Débat sans sujet'; renderSpeakers(); renderTranscript(); renderAnalysis(); notify('Conversation restaurée.'); switchView('debate'); }
+    function renderSettings() { $('topic').value = state.topic; $('speakerInputs').innerHTML = state.speakers.map((name, i) => `<div class="speaker-input"><input data-speaker="${i}" value="${escapeHtml(name)}" aria-label="Nom de l'orateur ${i + 1}">${state.speakers.length > 2 ? `<button class="icon-button remove-speaker" data-index="${i}" title="Supprimer">×</button>` : ''}</div>`).join(''); $('speakerCount').textContent = `(${state.speakers.length}/4)`; $('addSpeakerBtn').disabled = state.speakers.length >= 4; }
+    function renderSpeakers() { $('speakerButtons').innerHTML = state.speakers.map((name, i) => `<button class="speaker-btn ${i === state.activeSpeaker ? 'active' : ''}" data-speaker-button="${i}">🎤 ${escapeHtml(name)} parle <span class="shortcut">[${i + 1}]</span></button>`).join(''); }
+    function renderTranscript() { const box = $('transcript'); if (!state.entries.length && !state.interim) { box.innerHTML = '<div class="empty">Aucune intervention pour le moment.<br>La conversation apparaîtra ici.</div>'; return; } const messages = state.entries.map(entry => `<article class="message"><div class="message-meta"><strong>${escapeHtml(entry.speaker)}</strong><span>${escapeHtml(entry.time)}</span></div><p class="message-text">${highlight(entry.text)}</p></article>`).join(''); const interim = state.interim ? `<article class="message interim"><div class="message-meta"><strong>${escapeHtml(state.speakers[state.activeSpeaker])}</strong><span>en cours</span></div><p class="message-text">${escapeHtml(state.interim)}</p></article>` : ''; box.innerHTML = messages + interim; box.scrollTop = box.scrollHeight; }
+    function highlight(text) { let output = escapeHtml(text); if (!state.analysis) return output; state.analysis.orateurs?.forEach(orator => [...(orator.sophismes || [])].forEach(item => { if (item.extrait) output = output.replace(escapeHtml(item.extrait), `<mark class="fallacy" title="${escapeHtml(item.explication)}">${escapeHtml(item.extrait)}</mark>`); })); return output; }
+    function renderAnalysis() { const tabs = $('analysisTabs'), content = $('analysisContent'); if (!state.analysis) { tabs.innerHTML = ''; content.innerHTML = '<div class="empty">L\'analyse apparaîtra ici.<br>Ajoutez une transcription, puis cliquez sur Analyser.</div>'; return; } const names = state.analysis.orateurs || []; tabs.innerHTML = names.map((item, i) => `<button class="tab ${i === 0 ? 'active' : ''}" data-analysis-tab="${i}">${escapeHtml(item.nom)}</button>`).join('') + '<button class="tab" data-analysis-tab="summary">Synthèse</button>'; renderAnalysisTab(0); }
+    function renderAnalysisTab(index) { if (index === 'summary') { $('analysisContent').innerHTML = `<h4>Synthèse</h4><p class="thesis">${escapeHtml(state.analysis.synthese || 'Aucune synthèse.')}</p>`; return; } const item = state.analysis.orateurs[index]; if (!item) return; const args = item.arguments || [], falls = item.sophismes || [], facts = item.faits_a_verifier || []; const counts = ['forte','moyenne','faible'].map(level => args.filter(arg => arg.solidite === level).length); $('analysisContent').innerHTML = `<h4>Tableau de score</h4><div class="score-grid"><div class="score green"><b>${counts[0]}</b><small>Arguments forts</small></div><div class="score amber"><b>${counts[1]}</b><small>Arguments moyens</small></div><div class="score red"><b>${counts[2]}</b><small>Arguments faibles</small></div><div class="score red"><b>${falls.length}</b><small>Sophismes</small></div></div><h4>Thèse principale</h4><p class="thesis">${escapeHtml(item.these_principale || 'Non identifiée.')}</p><h4>Arguments (${args.length})</h4>${args.length ? args.map(arg => `<div class="analysis-item"><strong>${escapeHtml(arg.extrait || arg.these)}</strong><span class="badge ${arg.solidite === 'forte' ? 'strong' : arg.solidite === 'moyenne' ? 'medium' : 'weak'}">${escapeHtml(arg.solidite || '')}</span><br>${escapeHtml(arg.these || '')}<br><span style="color:var(--muted)">${escapeHtml(arg.type || '')} · ${escapeHtml(arg.justification || '')}</span></div>`).join('') : '<p class="field-help">Aucun argument clairement identifié.</p>'}<h4>Sophismes (${falls.length})</h4>${falls.length ? falls.map(fall => `<div class="analysis-item fallacy"><strong>${escapeHtml(fall.nom)}</strong><span class="badge">confiance ${escapeHtml(fall.confiance || '')}</span><br>« ${escapeHtml(fall.extrait || '')} »<br>${escapeHtml(fall.explication || '')}</div>`).join('') : '<p class="field-help">Aucun sophisme clairement identifié.</p>'}<h4>Faits à vérifier (${facts.length})</h4>${facts.length ? facts.map(fact => `<div class="analysis-item fact">${escapeHtml(fact)}</div>`).join('') : '<p class="field-help">Aucune affirmation factuelle relevée.</p>'}`; }
+    function addEntry(text, speakerIndex = state.activeSpeaker) { if (!text.trim()) return; state.entries.push({ speaker: state.speakers[speakerIndex], time: time(new Date()), text: text.trim() }); state.interim = ''; saveSession(); renderTranscript(); }
+    function createRecognition() { const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SpeechRecognition) { $('speechStatus').textContent = 'Reconnaissance vocale indisponible. Utilisez Google Chrome sur ordinateur.'; $('speechStatus').className = 'status error'; $('startBtn').disabled = true; return null; } const recognition = new SpeechRecognition(); recognition.lang = 'fr-FR'; recognition.continuous = true; recognition.interimResults = true; recognition.onstart = () => { state.listening = true; $('liveDot').classList.add('on'); $('speechStatus').textContent = 'Écoute en cours…'; $('startBtn').disabled = true; $('pauseBtn').disabled = false; $('stopBtn').disabled = false; }; recognition.onresult = event => { let interim = ''; for (let i = event.resultIndex; i < event.results.length; i++) { const transcript = event.results[i][0].transcript; if (event.results[i].isFinal) addEntry(transcript); else interim += transcript; } state.interim = interim; renderTranscript(); }; recognition.onerror = event => { if (event.error !== 'no-speech' && event.error !== 'aborted') { const message = event.error === 'network' ? 'Chrome ne peut pas joindre le service de dictée. Vérifiez Internet, désactivez un VPN et réessayez.' : event.error === 'not-allowed' ? 'Autorisez l’accès au microphone dans Chrome, puis rechargez la page.' : `Erreur du micro : ${event.error}.`; $('speechStatus').textContent = message; $('speechStatus').className = 'status error'; } }; recognition.onend = () => { state.listening = false; if (!state.manuallyStopped && !state.paused) { try { recognition.start(); } catch (error) {} } else if (state.manuallyStopped) { $('liveDot').classList.remove('on'); $('startBtn').disabled = false; $('pauseBtn').disabled = true; $('stopBtn').disabled = true; } }; return recognition; }
+    function startRecognition() { if (!state.recognition) state.recognition = createRecognition(); if (!state.recognition) return; state.manuallyStopped = false; state.paused = false; try { state.recognition.start(); } catch (error) {} }
+    function stopRecognition() { state.manuallyStopped = true; state.paused = false; state.interim = ''; if (state.recognition) state.recognition.stop(); renderTranscript(); }
+    async function analyze(automatic = false) { if (!state.entries.length || (automatic && state.lastAnalyzedIndex >= state.entries.length)) return; const key = $('apiKey').value.trim(); if (!key) { if (!automatic) { notify('Ajoutez votre clé API dans Configuration.'); switchView('settings'); } return; } const button = $('analyzeBtn'); button.disabled = true; button.textContent = 'Analyse en cours…'; const entriesToAnalyze = automatic ? state.entries.slice(state.lastAnalyzedIndex) : state.entries; const transcript = entriesToAnalyze.map(e => `${e.speaker} (${e.time}) : ${e.text}`).join('\n'); const previous = automatic && state.analysis ? `Contexte précédent résumé : ${state.analysis.synthese || 'Aucun résumé disponible.'}\n\n` : ''; try { const response = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 4000, system: SYSTEM_PROMPT, messages: [{ role: 'user', content: `Sujet : ${state.topic || 'Non précisé'}\n\n${previous}Nouvelles interventions à analyser :\n${transcript}` }] }) }); if (!response.ok) { const detail = await response.text(); throw new Error(response.status === 401 ? 'Clé API invalide.' : `Erreur API (${response.status}). ${detail.slice(0, 120)}`); } const data = await response.json(); const raw = (data.content || []).map(part => part.text || '').join('').replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim(); state.analysis = JSON.parse(raw); state.lastAnalyzedIndex = state.entries.length; saveSession(); renderAnalysis(); renderTranscript(); $('headerStatus').textContent = automatic ? 'Analyse automatique actualisée' : 'Analyse actualisée'; notify('Analyse terminée.'); } catch (error) { $('analysisContent').innerHTML = `<div class="empty">Impossible de terminer l'analyse.<br><br>${escapeHtml(error.message.includes('JSON') ? 'La réponse reçue n’est pas un JSON valide.' : error.message)}<br><br>Vérifiez la clé et votre connexion.</div>`; notify('L’analyse a échoué.'); } finally { button.disabled = false; button.textContent = '✦ Analyser'; } }
+    function exportText() { const text = [`ARBITRE — RAPPORT DE DÉBAT`, `Sujet : ${state.topic || 'Non précisé'}`, '', 'TRANSCRIPTION', ...state.entries.map(e => `[${e.time}] ${e.speaker} : ${e.text}`), '', 'ANALYSE', state.analysis ? JSON.stringify(state.analysis, null, 2) : 'Aucune analyse réalisée.'].join('\n'); const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'rapport-arbitre.txt'; link.click(); URL.revokeObjectURL(url); }
+    function switchView(view) { document.querySelectorAll('.view').forEach(item => item.classList.toggle('active', item.id === `${view}View`)); document.querySelectorAll('.nav button').forEach(item => item.classList.toggle('active', item.dataset.view === view)); }
+    function saveSettings() { state.topic = $('topic').value.trim(); state.speakers = [...document.querySelectorAll('[data-speaker]')].map(input => input.value.trim() || 'Orateur'); localStorage.setItem(settingsKey, JSON.stringify({ apiKey: $('apiKey').value.trim(), groqKey: $('groqKey').value.trim(), autoAnalyze: $('autoAnalyze').checked, speakers: state.speakers, topic: state.topic })); saveSession(); $('debateTitle').textContent = state.topic || 'Débat sans sujet'; renderSpeakers(); notify('Configuration enregistrée.'); switchView('debate'); }
+    document.addEventListener('click', event => { const nav = event.target.closest('[data-view]'); if (nav) switchView(nav.dataset.view); const speaker = event.target.closest('[data-speaker-button]'); if (speaker) { state.activeSpeaker = Number(speaker.dataset.speakerButton); renderSpeakers(); } const tab = event.target.closest('[data-analysis-tab]'); if (tab) { document.querySelectorAll('.tab').forEach(item => item.classList.remove('active')); tab.classList.add('active'); renderAnalysisTab(tab.dataset.analysisTab === 'summary' ? 'summary' : Number(tab.dataset.analysisTab)); } const remove = event.target.closest('.remove-speaker'); if (remove) { state.speakers.splice(Number(remove.dataset.index), 1); renderSettings(); } });
+    $('startBtn').onclick = startRecognition; $('stopBtn').onclick = stopRecognition; $('pauseBtn').onclick = () => { state.paused = true; if (state.recognition) state.recognition.stop(); $('speechStatus').textContent = 'Micro en pause.'; }; $('analyzeBtn').onclick = analyze; $('exportBtn').onclick = exportText; $('printBtn').onclick = () => window.print(); $('saveSettingsBtn').onclick = saveSettings; $('addSpeakerBtn').onclick = () => { if (state.speakers.length < 4) { state.speakers.push(`Orateur ${state.speakers.length + 1}`); renderSettings(); } }; $('pasteBtn').onclick = () => { $('pasteText').value = ''; $('pasteModal').classList.add('open'); $('pasteText').focus(); }; $('cancelPasteBtn').onclick = () => $('pasteModal').classList.remove('open'); $('importPasteBtn').onclick = () => { const pasted = $('pasteText').value; if (!pasted.trim()) return; pasted.split('\n').map(line => line.match(/^\s*(.+?)\s*:\s*(.+)$/)).filter(Boolean).forEach(match => { const speakerIndex = Math.max(0, state.speakers.findIndex(name => name.toLowerCase() === match[1].trim().toLowerCase())); addEntry(match[2], speakerIndex); }); $('pasteModal').classList.remove('open'); notify('Transcription importée.'); }; $('newBtn').onclick = () => { if (!confirm('Effacer la transcription et commencer un nouveau débat ?')) return; state.entries = []; state.analysis = null; state.interim = ''; saveSession(); renderTranscript(); renderAnalysis(); $('headerStatus').textContent = 'Session prête'; notify('Nouveau débat prêt.'); };
+    document.addEventListener('click', event => { const card = event.target.closest('.analysis-item'); if (card) card.classList.toggle('expanded'); });
+    document.addEventListener('click', event => { const message = event.target.closest('.message'); if (message) { const opening = !message.classList.contains('expanded'); document.querySelectorAll('.message.expanded').forEach(item => item.classList.remove('expanded', 'focused')); message.classList.toggle('expanded', opening); message.classList.toggle('focused', opening); $('headerStatus').textContent = opening ? `Intervention de ${message.querySelector('.message-meta strong')?.textContent || 'l’orateur'}` : 'Session prête'; } const filter = event.target.closest('[data-filter]'); if (filter) { document.querySelectorAll('.filter-chip').forEach(item => item.classList.toggle('active', item === filter)); const type = filter.dataset.filter; $('analysisContent').classList.add('has-filter'); document.querySelectorAll('.analysis-item').forEach(item => { const visible = type === 'all' || (type === 'argument' && !item.classList.contains('fallacy') && !item.classList.contains('fact')) || item.classList.contains(type); item.classList.toggle('filtered-out', !visible); }); const thesis = document.querySelector('.analysis-content .thesis'); if (thesis) thesis.classList.toggle('filtered-out', type !== 'all' && type !== 'thesis'); } });
+    function lireIdee(node) { const idea = node.dataset.idea; document.querySelectorAll('.arena-node.selected').forEach(item => item.classList.remove('selected')); node.classList.add('selected'); const filter = document.querySelector(`[data-filter="${idea}"]`); if (filter) filter.click(); $('headerStatus').textContent = `Lecture : ${node.querySelector('span')?.textContent || 'idée'}`; $('analysisContent').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    document.addEventListener('click', event => { const node = event.target.closest('.arena-node'); if (node) lireIdee(node); });
+    document.addEventListener('click', event => { const historyItem = event.target.closest('[data-history-id]'); if (historyItem) openHistory(historyItem.dataset.historyId); });
+    document.addEventListener('keydown', event => { if (['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return; const node = event.target.closest?.('.arena-node'); if (node && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); lireIdee(node); return; } if (/^[1-4]$/.test(event.key) && Number(event.key) <= state.speakers.length) { state.activeSpeaker = Number(event.key) - 1; renderSpeakers(); } });
+    let autoTimer; function configureAutoAnalysis() { clearInterval(autoTimer); if ($('autoAnalyze').checked) autoTimer = setInterval(() => analyze(true), 120000); } $('autoAnalyze').addEventListener('change', configureAutoAnalysis);
+    loadData(); $('groqKey').value = localStorage.getItem('arbitre-groq-key') || $('groqKey').value || ''; $('saveSettingsBtn').addEventListener('click', () => localStorage.setItem('arbitre-groq-key', $('groqKey').value.trim())); $('newDebateSide').onclick = () => { $('newBtn').click(); state.debateId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()); saveSession(); }; $('debateTitle').textContent = state.topic || 'Débat sans sujet'; renderSettings(); renderSpeakers(); renderTranscript(); renderAnalysis(); renderHistory(); createRecognition(); configureAutoAnalysis();
+    function youtubeVideoId(value) { const match = value.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|embed\/))([\w-]{11})/); return match ? match[1] : ''; }
+    async function importYoutubeTranscript() { const videoId = youtubeVideoId($('youtubeUrl').value.trim()); if (!videoId) { notify('URL YouTube invalide.'); return; } const button = $('importYoutubeBtn'); button.disabled = true; button.textContent = 'Recherche…'; try { const response = await fetch(`https://video.google.com/timedtext?lang=fr&v=${videoId}&fmt=srv3`); if (!response.ok) throw new Error('Sous-titres introuvables.'); const xml = await response.text(); const documentXml = new DOMParser().parseFromString(xml, 'text/xml'); const lines = [...documentXml.querySelectorAll('text')].map(node => node.textContent.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim()).filter(Boolean); if (!lines.length) throw new Error('Cette vidéo ne possède pas de sous-titres français publics.'); lines.join(' ').split(/(?<=[.!?])\s+/).forEach(text => addEntry(text)); $('youtubeModal').classList.remove('open'); notify(`${lines.length} segments YouTube importés.`); } catch (error) { notify(`${error.message} Copiez la transcription YouTube manuellement si nécessaire.`); } finally { button.disabled = false; button.textContent = 'Importer les sous-titres'; } }
+    async function analyzeMediaFile(file) {
+      const key = $('apiKey').value.trim();
+      if (!key) { notify('Ajoutez votre clé API Google AI dans Configuration.'); switchView('settings'); return; }
+      $('speechStatus').textContent = `Envoi de ${file.name} à Gemini…`;
+      $('mediaBtn').disabled = true;
+      try {
+        const start = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'X-Goog-Upload-Protocol': 'resumable', 'X-Goog-Upload-Command': 'start', 'X-Goog-Upload-Header-Content-Length': String(file.size), 'X-Goog-Upload-Header-Content-Type': file.type, 'Content-Type': 'application/json' }, body: JSON.stringify({ file: { display_name: file.name } }) });
+        if (!start.ok) throw new Error('Google a refusé l’envoi du fichier. Vérifiez la clé ou le quota.');
+        const uploadUrl = start.headers.get('X-Goog-Upload-URL');
+        if (!uploadUrl) throw new Error('Google n’a pas fourni d’URL d’envoi.');
+        const upload = await fetch(uploadUrl, { method: 'POST', headers: { 'Content-Length': String(file.size), 'X-Goog-Upload-Offset': '0', 'X-Goog-Upload-Command': 'upload, finalize', 'Content-Type': file.type }, body: file });
+        if (!upload.ok) throw new Error('Le fichier n’a pas pu être envoyé à Google.');
+        const uploaded = await upload.json();
+        const media = uploaded.file || uploaded;
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, contents: [{ role: 'user', parts: [{ text: `Analyse entièrement cet enregistrement audio ou vidéo. Retranscris mentalement les interventions et identifie les orateurs autant que possible. Sujet : ${state.topic || 'Non précisé'}. Réponds uniquement avec le JSON demandé.` }, { fileData: { mimeType: media.mimeType || file.type, fileUri: media.uri } }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json' } }) });
+        if (!response.ok) throw new Error('Gemini n’a pas pu analyser ce fichier.');
+        const data = await response.json();
+        const raw = (data.candidates?.[0]?.content?.parts || []).map(part => part.text || '').join('').replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+        state.analysis = JSON.parse(raw);
+        state.lastAnalyzedIndex = state.entries.length;
+        saveSession(); renderAnalysis(); renderTranscript(); $('headerStatus').textContent = 'Analyse audio actualisée'; $('speechStatus').textContent = 'Analyse audio/vidéo terminée.'; notify('Analyse audio/vidéo terminée.');
+      } catch (error) { $('speechStatus').textContent = error.message; $('speechStatus').className = 'status error'; notify('L’analyse du fichier a échoué.'); } finally { $('mediaBtn').disabled = false; $('mediaFile').value = ''; }
+    }
+    // Appel Google Gemini : le format de réponse est différent de celui d'Anthropic.
+    async function analyze(automatic = false) { if (!state.entries.length || (automatic && state.lastAnalyzedIndex >= state.entries.length)) return; const key = $('apiKey').value.trim(); if (!key) { if (!automatic) { $('analysisContent').innerHTML = '<div class="empty">Ajoutez votre clé API Google AI dans Configuration pour lancer l’analyse.<br><br>Ouvrez Configuration dans le menu de gauche.</div>'; notify('Clé API Google AI manquante.'); } return; } const button = $('analyzeBtn'); button.disabled = true; button.textContent = 'Analyse en cours…'; const entriesToAnalyze = automatic ? state.entries.slice(state.lastAnalyzedIndex) : state.entries; const transcript = entriesToAnalyze.map(e => `${e.speaker} (${e.time}) : ${e.text}`).join('\n'); const previous = automatic && state.analysis ? `Contexte précédent résumé : ${state.analysis.synthese || 'Aucun résumé disponible.'}\n\n` : ''; try { const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, contents: [{ role: 'user', parts: [{ text: `Sujet : ${state.topic || 'Non précisé'}\n\n${previous}Nouvelles interventions à analyser :\n${transcript}` }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json' } }) }); if (!response.ok) { const detail = await response.text(); throw new Error(response.status === 400 || response.status === 403 ? 'Clé Google AI invalide ou quota gratuit dépassé.' : `Erreur Google AI (${response.status}). ${detail.slice(0, 120)}`); } const data = await response.json(); const raw = (data.candidates?.[0]?.content?.parts || []).map(part => part.text || '').join('').replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim(); if (!raw) throw new Error('Google AI n’a renvoyé aucun résultat.'); state.analysis = JSON.parse(raw); state.lastAnalyzedIndex = state.entries.length; saveSession(); renderAnalysis(); renderTranscript(); $('headerStatus').textContent = automatic ? 'Analyse automatique actualisée' : 'Analyse actualisée'; notify('Analyse Gemini terminée.'); } catch (error) { $('analysisContent').innerHTML = `<div class="empty">Impossible de terminer l'analyse.<br><br>${escapeHtml(error.message.includes('JSON') ? 'La réponse reçue n’est pas un JSON valide.' : error.message)}<br><br>Vérifiez votre clé Google AI et votre connexion.</div>`; notify('L’analyse a échoué.'); } finally { button.disabled = false; button.textContent = '✦ Analyser'; } }
+    $('youtubeBtn').onclick = () => { $('youtubeUrl').value = ''; $('youtubeModal').classList.add('open'); $('youtubeUrl').focus(); };
+    $('cancelYoutubeBtn').onclick = () => $('youtubeModal').classList.remove('open');
+    $('importYoutubeBtn').onclick = importYoutubeTranscript;
+    async function analyzeYoutubeWithServer() { const url = $('youtubeUrl').value.trim(); const key = $('apiKey').value.trim(); if (!url || !key) { notify(!key ? 'Ajoutez votre clé Google AI dans Configuration.' : 'Ajoutez une URL YouTube.'); return; } const button = $('importYoutubeBtn'); button.disabled = true; button.textContent = 'Téléchargement et analyse…'; try { const response = await fetch('/api/analyze-youtube', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, apiKey: key, topic: state.topic }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Le serveur n’a pas pu analyser la vidéo.'); state.entries = [{ speaker: 'Débat YouTube', time: time(new Date()), text: data.transcript }]; state.analysis = data.analysis; state.lastAnalyzedIndex = state.entries.length; saveSession(); renderTranscript(); renderAnalysis(); $('youtubeModal').classList.remove('open'); $('headerStatus').textContent = 'Vidéo YouTube analysée'; notify('La vidéo YouTube a été transcrite et analysée.'); } catch (error) { notify(error.message); } finally { button.disabled = false; button.textContent = 'Importer les sous-titres'; } }
+    async function analyzeYoutubeWithGroq() { const url = $('youtubeUrl').value.trim(); const key = $('apiKey').value.trim(); const groqKey = $('groqKey').value.trim(); if (!url || !key || !groqKey) { notify(!groqKey ? 'Ajoutez la clé Groq dans Configuration.' : !key ? 'Ajoutez la clé Google AI dans Configuration.' : 'Ajoutez une URL YouTube.'); return; } const button = $('importYoutubeBtn'); button.disabled = true; button.textContent = 'Transcription audio…'; try { const response = await fetch('/api/analyze-youtube', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, apiKey: key, groqKey, topic: state.topic }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Le serveur n’a pas pu analyser la vidéo.'); state.entries = [{ speaker: 'Débat YouTube', time: time(new Date()), text: data.transcript }]; state.analysis = data.analysis; state.lastAnalyzedIndex = state.entries.length; saveSession(); renderTranscript(); renderAnalysis(); $('youtubeModal').classList.remove('open'); notify('Transcription Groq et analyse Gemini terminées.'); } catch (error) { notify(error.message); } finally { button.disabled = false; button.textContent = 'Importer les sous-titres'; } }
+    $('importYoutubeBtn').onclick = analyzeYoutubeWithGroq;
+    $('mediaBtn').onclick = () => $('mediaFile').click();
+    $('mediaFile').onchange = event => { const file = event.target.files[0]; if (file) analyzeMediaFile(file); };
+    // Réaffecte le bouton après l'initialisation afin d'utiliser Gemini.
+    $('analyzeBtn').onclick = analyze;
+    // Affiche une indication persistante quand l'analyse est lancée sans clé API.
+    $('analyzeBtn').addEventListener('click', () => { if (!state.entries.length) { $('analysisContent').innerHTML = '<div class="empty">Ajoutez au moins une intervention avant de lancer l’analyse.<br><br>Cliquez sur « Coller une transcription » ou démarrez le micro.</div>'; } else if (!$('apiKey').value.trim()) { $('analysisContent').innerHTML = '<div class="empty">Ajoutez votre clé API Google AI dans Configuration pour lancer l’analyse.<br><br>Ouvrez Configuration dans le menu de gauche.</div>'; } });
+  </script>
+</body>
+</html>
