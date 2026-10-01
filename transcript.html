@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>YouTube → Transcription</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            margin: 0; 
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1e 100%);
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        h1 { 
+            font-size: 2.5em;
+            margin: 0 0 10px;
+            background: linear-gradient(90deg, #00d4ff, #0099ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle { 
+            color: #999; 
+            font-size: 0.9em;
+        }
+        .form {
+            background: #16213e;
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid #0099ff;
+            box-shadow: 0 0 20px rgba(0, 153, 255, 0.1);
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #00d4ff;
+            font-size: 0.9em;
+        }
+        input[type="text"],
+        input[type="password"],
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #0099ff;
+            border-radius: 6px;
+            background: #0f1729;
+            color: #e0e0e0;
+            font: inherit;
+            transition: all 0.3s;
+        }
+        input:focus {
+            outline: 0;
+            border-color: #00d4ff;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(90deg, #0099ff, #00d4ff);
+            color: #000;
+            border: 0;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        button:hover { 
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
+            transform: translateY(-2px);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .status {
+            text-align: center;
+            margin: 20px 0;
+            height: 20px;
+            font-size: 0.9em;
+        }
+        .status.loading {
+            color: #00d4ff;
+            animation: pulse 1s infinite;
+        }
+        .status.error {
+            color: #ff6b6b;
+        }
+        .status.success {
+            color: #51cf66;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .transcript-box {
+            background: #0f1729;
+            border: 1px solid #0099ff;
+            border-radius: 12px;
+            padding: 20px;
+            min-height: 200px;
+            max-height: 600px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.8;
+            color: #e0e0e0;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9em;
+        }
+        .transcript-box:empty::before {
+            content: "La transcription apparaîtra ici...";
+            color: #666;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .btn-small {
+            flex: 1;
+            padding: 10px;
+            background: #0099ff;
+            color: #000;
+            border: 0;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.3s;
+        }
+        .btn-small:hover { background: #00d4ff; }
+        .info {
+            background: rgba(0, 153, 255, 0.1);
+            border-left: 3px solid #0099ff;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+            color: #b0b0b0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>▶ YouTube Transcriber</h1>
+            <p class="subtitle">Transcription automatique pour vidéos YouTube (2h+)</p>
+        </div>
+
+        <div class="info">
+            📝 Collez un lien YouTube, choisissez un moteur de transcription et renseignez la clé correspondante
+        </div>
+
+        <div class="form">
+            <div class="form-group">
+                <label>🔗 Lien YouTube</label>
+                <input type="text" id="url" placeholder="https://youtu.be/..." value="https://youtu.be/mdtLHb2quYM?si=28DiRQ8edlpW4UBk">
+            </div>
+            <div class="form-group">
+                <label>⚙️ Moteur de transcription</label>
+                <select id="engine" onchange="updateKeyFields()">
+                    <option value="groq-turbo" selected>Groq — Whisper large-v3-turbo (gratuit, rapide, recommandé)</option>
+                    <option value="groq-v3">Groq — Whisper large-v3 (gratuit, plus précis)</option>
+                    <option value="local">Local — faster-whisper (gratuit, sans clé, lent sur CPU)</option>
+                    <option value="gemini">Google Gemini (quota gratuit limité)</option>
+                </select>
+            </div>
+            <div class="form-group" id="groqKeyGroup">
+                <label>🔑 Clé API Groq</label>
+                <input type="password" id="groqKey" placeholder="gsk_...">
+            </div>
+            <div class="form-group" id="apiKeyGroup">
+                <label>🔑 Clé API Google Gemini</label>
+                <input type="password" id="apiKey" placeholder="AIzaSy...">
+            </div>
+            <button onclick="transcribe()">📥 Transcrire maintenant</button>
+            <div class="status" id="status"></div>
+        </div>
+
+        <h2 style="color: #00d4ff; margin-top: 30px;">Transcription</h2>
+        <div class="transcript-box" id="transcript"></div>
+        
+        <div class="actions" id="actions" style="display: none;">
+            <button class="btn-small" onclick="copyTranscript()">📋 Copier</button>
+            <button class="btn-small" onclick="downloadTranscript()">⬇️ Télécharger</button>
+            <button class="btn-small" onclick="clearAll()">🗑️ Réinitialiser</button>
+        </div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const transcriptEl = document.getElementById('transcript');
+        const actionsEl = document.getElementById('actions');
+
+        function updateStatus(message, type = 'info') {
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        function updateKeyFields() {
+            const engine = document.getElementById('engine').value;
+            document.getElementById('groqKeyGroup').style.display = engine.startsWith('groq') ? '' : 'none';
+            document.getElementById('apiKeyGroup').style.display = engine === 'gemini' ? '' : 'none';
+        }
+        updateKeyFields();
+
+        async function transcribe() {
+            const url = document.getElementById('url').value.trim();
+            const engine = document.getElementById('engine').value;
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const groqKey = document.getElementById('groqKey').value.trim();
+
+            if (!url) { updateStatus('❌ Lien manquant', 'error'); return; }
+            if (engine === 'gemini' && !apiKey) { updateStatus('❌ Clé API Gemini manquante', 'error'); return; }
+            if (engine.startsWith('groq') && !groqKey) { updateStatus('❌ Clé API Groq manquante', 'error'); return; }
+
+            updateStatus('⏳ Téléchargement et transcription... (vidéo longue : plusieurs minutes)', 'loading');
+            transcriptEl.textContent = '';
+            actionsEl.style.display = 'none';
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3 * 3600000); // 3 h
+
+                const response = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, engine, apiKey, groqKey }),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+                const data = await response.json();
+
+                if (response.status === 200) {
+                    transcriptEl.textContent = data.transcript;
+                    const failed = data.failedSegments || [];
+                    const fromCaptions = data.captionSegments || [];
+                    if (failed.length) {
+                        updateStatus(`⚠️ Transcription partielle : segment(s) ${failed.join(', ')} / ${data.segments} non transcrit(s) (moteur indisponible)`, 'error');
+                    } else if (fromCaptions.length) {
+                        updateStatus(`✅ Transcription complète (segment(s) ${fromCaptions.join(', ')} via sous-titres YouTube, moteur indisponible)`, 'success');
+                    } else {
+                        updateStatus('✅ Transcription complète', 'success');
+                    }
+                    actionsEl.style.display = 'flex';
+                } else {
+                    updateStatus(`❌ Erreur: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                updateStatus(`❌ Erreur: ${e.message}`, 'error');
+            }
+        }
+
+        function copyTranscript() {
+            navigator.clipboard.writeText(transcriptEl.textContent);
+            updateStatus('✓ Copié', 'success');
+            setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        }
+
+        function downloadTranscript() {
+            const blob = new Blob([transcriptEl.textContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'transcription.txt';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function clearAll() {
+            document.getElementById('url').value = '';
+            document.getElementById('apiKey').value = '';
+            document.getElementById('groqKey').value = '';
+            transcriptEl.textContent = '';
+            statusEl.textContent = '';
+            actionsEl.style.display = 'none';
+        }
+
+        document.getElementById('url').addEventListener('keypress', e => {
+            if (e.key === 'Enter') transcribe();
+        });
+        document.getElementById('apiKey').addEventListener('keypress', e => {
+            if (e.key === 'Enter') transcribe();
+        });
+        document.getElementById('groqKey').addEventListener('keypress', e => {
+            if (e.key === 'Enter') transcribe();
+        });
+    </script>
+</body>
+</html>
