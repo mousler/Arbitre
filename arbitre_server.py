@@ -4,6 +4,7 @@
 
 import json
 import os
+import posixpath
 import re
 import subprocess
 import tempfile
@@ -14,9 +15,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import transcript_server as ts  # téléchargement/transcription, TLS via proxy (truststore), suivi des quotas
+import community  # comptes, communauté, défis, administration (SQLite dans data/)
+
+STATIC_RE = re.compile(r"^/[\w-]+\.html$")  # seules les pages HTML racine sont servies (jamais data/, .py, .venv…)
 
 PORT = 8766
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -76,6 +81,44 @@ Rédige la synthèse finale et reformule la thèse principale de chaque orateur 
 Réponds UNIQUEMENT avec un objet JSON valide :
 {"synthese":"string (6 à 8 phrases : points de désaccord, qualité argumentative de chaque orateur, sophismes et erreurs logiques les plus marquants, points restant à vérifier)","orateurs":[{"nom":"string","these_principale":"string (1 à 2 phrases)"}]}"""
 
+MAP_PROMPT = """Tu es un arbitre de débat expert en logique et en théorie de l'argumentation (modèle de Toulmin, cartographie argumentative).
+On te fournit le sujet, la synthèse, le déroulé et les éléments extraits d'un débat (thèses, arguments avec prémisses et solidité, sophismes, erreurs logiques, faits à vérifier).
+Construis l'ARBRE ARGUMENTATIF complet du débat :
+- question : la question débattue, formulée comme une vraie question.
+- these : la thèse principale en jeu (celle que défend la position POUR).
+- pour / contre : les deux positions en présence (intitulé court + orateurs qui la portent). S'il n'y a qu'un orateur, la position CONTRE regroupe les objections évoquées ou qu'on peut raisonnablement lui opposer.
+- arguments : 2 à 4 arguments par position, les plus importants (fusionne les doublons). Identifiants A1, A2… pour POUR et B1, B2… pour CONTRE. Décompose chacun finement : type (causal, exemple, analogie, autorité, statistique, valeurs, conséquences, définition…), premisses (2 à 3 énoncés sur lesquels il repose), hypotheses (présupposés non démontrés, souvent implicites), evidences (preuves, chiffres, exemples, études citées ; liste vide s'il n'y en a aucune), garant (la règle qui relie les preuves à la conclusion), conclusion (conclusion locale de l'argument), moment (horodatage approximatif s'il est connu, sinon "").
+- sophismes : TOUS les sophismes et erreurs logiques relevés dans le débat (S1, S2…), rattachés au nœud où ils sont commis ("cible" = A1, B2, O1, R1…) ; "nom" = nom du sophisme, "extrait" = citation courte, "explication" = pourquoi le raisonnement est fautif, "gravite" = forte si le sophisme porte tout l'argument.
+- objections : objections adressées aux arguments (O1, O2…), "cible" = identifiant de l'argument visé ; "explicite": true si elle est formulée dans le débat, false si c'est toi qui la relèves.
+- refutations : réponses aux objections (R1, R2…), "cible" = identifiant de l'objection ; "contre_refutation" si une réponse à la réfutation existe ou s'impose, sinon null.
+- hypotheses : hypothèses explicites et implicites du débat ("porteur" = identifiant de l'argument qui en dépend) et risques de raisonnement (sophismes, biais, erreurs logiques ; "concerne" = identifiants).
+- evaluation : pour chaque critère, une force et un commentaire d'une phrase. Pour "risques", forte = risques bien maîtrisés.
+- phases : le DÉROULÉ du débat en 3 à 6 phases chronologiques (ouverture, offensives, contre-attaques, tournants, clôture) : titre, moment, resume (ce qui s'y joue), "noeuds" = identifiants des arguments / objections / réfutations / sophismes apparus dans cette phase, "avantage" = camp qui domine la phase, "tournant": true si la phase fait basculer le débat.
+- dynamique : comment le débat a fonctionné — "initiative" (camp qui a mené et imposé ses thèmes), "commentaire" (2 à 3 phrases : qui attaque, qui répond, qui esquive, qui change de terrain), "esquives" (questions ou objections restées sans réponse), "terrain" (les points de désaccord réels).
+- conclusion : conclusion finale de l'arbitre et position la mieux étayée (pour, contre ou equilibre).
+"force" vaut toujours forte, moyenne ou faible.
+Relations (identifiants définis dans ta réponse uniquement, "T" = thèse principale) :
+- supports : nœuds que ce nœud renforce ; attacks : nœuds qu'il contredit ou affaiblit ; depends_on : nœuds dont sa validité dépend.
+En général un argument POUR supports ["T"] et un argument CONTRE attacks ["T"] ; ajoute les liens croisés (argument qui en contredit un autre, qui repose sur un autre).
+Règles : impartialité stricte ; textes courts (25 mots maximum) compréhensibles par un non-spécialiste ; n'invente aucun fait ; reste fidèle à ce qui a été dit.
+
+Réponds UNIQUEMENT avec un objet JSON valide :
+{"question":"string","these":{"texte":"string","force":"forte|moyenne|faible"},
+"pour":{"intitule":"string","orateurs":["string"]},"contre":{"intitule":"string","orateurs":["string"]},
+"arguments":[{"id":"A1","camp":"pour|contre","titre":"string","orateur":"string","type":"string","moment":"string","force":"forte|moyenne|faible","premisses":["string"],"hypotheses":["string"],"evidences":[{"texte":"string","force":"forte|moyenne|faible"}],"garant":"string","conclusion":"string","supports":["T"],"attacks":[],"depends_on":[]}],
+"sophismes":[{"id":"S1","cible":"B1","nom":"string","orateur":"string","extrait":"string","explication":"string","gravite":"forte|moyenne|faible"}],
+"objections":[{"id":"O1","cible":"A1","texte":"string","orateur":"string","force":"forte|moyenne|faible","explicite":true}],
+"refutations":[{"id":"R1","cible":"O1","texte":"string","orateur":"string","force":"forte|moyenne|faible","contre_refutation":{"texte":"string","orateur":"string","force":"forte|moyenne|faible"}}],
+"hypotheses":{"explicites":[{"texte":"string","porteur":"A1"}],"implicites":[{"texte":"string","porteur":"B1"}],"risques":[{"texte":"string","concerne":["A1"]}]},
+"evaluation":{"solidite_logique":{"force":"forte|moyenne|faible","commentaire":"string"},"qualite_preuves":{"force":"…","commentaire":"…"},"coherence_interne":{"force":"…","commentaire":"…"},"faisabilite":{"force":"…","commentaire":"…"},"risques":{"force":"…","commentaire":"…"}},
+"phases":[{"titre":"string","moment":"string","resume":"string","noeuds":["A1","O1"],"avantage":"pour|contre|equilibre","tournant":false}],
+"dynamique":{"initiative":"pour|contre|equilibre","commentaire":"string","esquives":["string"],"terrain":["string"]},
+"conclusion":{"texte":"string (3 à 4 phrases)","force":"forte|moyenne|faible","avantage":"pour|contre|equilibre"}}"""
+MAP_INPUT_CHARS = 12000  # ≈ 3 500 tokens d'entrée : reste sous les limites/minute du tier gratuit Groq
+MAP_MAX_TOKENS = 7000
+FORCES = ("forte", "moyenne", "faible")
+EVAL_KEYS = ("solidite_logique", "qualite_preuves", "coherence_interne", "faisabilite", "risques")
+
 
 class FatalError(RuntimeError):
     """Erreur non récupérable (clé refusée…) : inutile d'essayer les parties suivantes"""
@@ -104,23 +147,22 @@ def check_groq_key(key):
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             raise ValueError(f"Groq refuse la clé ({http_error_message(e)} ; {hint}). "
-                             "Elle a peut-être été révoquée ou mal copiée : recréez-en une sur console.groq.com/keys, "
-                             "collez-la dans Configuration puis Enregistrer.")
+                             "L'administrateur doit la remplacer dans Administration › Modèle IA.")
     except (urllib.error.URLError, TimeoutError):
         pass  # réseau indisponible : l'erreur réelle apparaîtra pendant la tâche
 
 
-def groq_chat(api_key, system, user):
+def groq_chat(api_key, system, user, max_tokens=4096, models=None, temperature=0.2):
     """Chat completion Groq (API compatible OpenAI) en mode JSON, avec repli entre modèles"""
     last_error = "quota épuisé sur tous les modèles Groq"
-    for model in GROQ_CHAT_MODELS:
+    for model in models or GROQ_CHAT_MODELS:
         if ts.is_exhausted(model):
             continue
         payload = {
             "model": model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "temperature": 0.2,
-            "max_tokens": 4096,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
         if model.startswith("openai/gpt-oss"):
@@ -189,11 +231,12 @@ def gemini_chat(api_key, system, user):
     return "".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", []))
 
 
-def llm_json(engine, keys, system, user):
+def llm_json(engine, keys, system, user, max_tokens=4096):
     """Appelle le moteur d'analyse et retourne l'objet JSON produit (2 essais si la réponse est invalide)"""
     problem = None
     for _ in range(2):
-        raw = groq_chat(keys["groq"], system, user) if engine == "groq" else gemini_chat(keys["gemini"], system, user)
+        raw = (groq_chat(keys["groq"], system, user, max_tokens, keys.get("groq_models"), keys.get("temperature", 0.2))
+               if engine == "groq" else gemini_chat(keys["gemini"], system, user))
         start, end = raw.find("{"), raw.rfind("}")
         try:
             data = json.loads(raw[start:end + 1]) if 0 <= start < end else None
@@ -267,7 +310,183 @@ def merge_chunk(speakers, data, where):
                 target["faits_a_verifier"].append(f"[{where}] {text.strip()}")
 
 
-def analyze_blocks(blocks, engine, keys, topic, user_speakers, context, log):
+def _text(value, limit=400):
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _force(value):
+    v = str(value or "").strip().lower()
+    return next((f for f in FORCES if v.startswith(f[:4])), "moyenne")
+
+
+def _list(value):
+    return value if isinstance(value, list) else []
+
+
+def map_input(analysis, topic):
+    """Bilan compact du débat pour la construction de l'arbre (tronqué pour tenir dans le budget de tokens)"""
+    rank = {"forte": 0, "moyenne": 1, "faible": 2}
+    deroule = "\n".join(str(s) for s in _list(analysis.get("deroule")))[:3000]
+    text = ""
+    for cap in (12, 8, 5, 3, 2):
+        bilan = []
+        for o in _list(analysis.get("orateurs")):
+            if not isinstance(o, dict):
+                continue
+            args = sorted((a for a in _list(o.get("arguments")) if isinstance(a, dict)), key=lambda a: rank.get(a.get("solidite"), 3))
+            bilan.append({
+                "nom": _text(o.get("nom"), 80),
+                "these": _text(o.get("these_principale"), 300),
+                "arguments": [{
+                    "moment": _text(a.get("horodatage"), 20),
+                    "these": _text(a.get("these") or a.get("extrait"), 220),
+                    "premisses": [_text(p, 150) for p in _list(a.get("premisses"))[:3]],
+                    "type": _text(a.get("type"), 40),
+                    "solidite": _text(a.get("solidite"), 10),
+                    "justification": _text(a.get("justification"), 150),
+                } for a in args[:cap]],
+                "sophismes": [f"[{_text(s.get('horodatage'), 20)}] {_text(s.get('nom'), 60)} : {_text(s.get('extrait'), 120)} — {_text(s.get('explication'), 120)}" for s in _list(o.get("sophismes"))[:cap] if isinstance(s, dict)],
+                "erreurs_logiques": [f"{_text(x.get('type'), 60)} : {_text(x.get('explication'), 120)}" for x in _list(o.get("incoherences"))[:cap] if isinstance(x, dict)],
+                "faits_a_verifier": [_text(f, 150) for f in _list(o.get("faits_a_verifier"))[:cap]],
+            })
+        text = "\n".join([
+            f"Sujet : {topic or 'non précisé'}", "", "Synthèse :", _text(analysis.get("synthese"), 2000) or "—", "",
+            "Déroulé :", deroule or "—", "", "Éléments par orateur :", json.dumps(bilan, ensure_ascii=False),
+        ])
+        if len(text) <= MAP_INPUT_CHARS:
+            break
+    return text[:MAP_INPUT_CHARS]
+
+
+def normalize_map(data):
+    """Valide l'arbre produit par le modèle : identifiants uniques, forces normalisées, relations vers des nœuds existants"""
+    def key(v):
+        return str(v or "").strip().upper()
+    ids = {"T": "T", "THESE": "T", "THÈSE": "T"}
+    raw_args = [a for a in _list(data.get("arguments")) if isinstance(a, dict)][:10]
+    raw_obj = [o for o in _list(data.get("objections")) if isinstance(o, dict)][:12]
+    raw_ref = [r for r in _list(data.get("refutations")) if isinstance(r, dict)][:12]
+    raw_soph = [s for s in _list(data.get("sophismes")) if isinstance(s, dict) and _text(s.get("nom"))][:12]
+    count = {"A": 0, "B": 0}
+    for a in raw_args:
+        prefix = "B" if str(a.get("camp", "")).strip().lower().startswith("contre") else "A"
+        count[prefix] += 1
+        a["_id"] = f"{prefix}{count[prefix]}"
+    for prefix, group in (("O", raw_obj), ("R", raw_ref), ("S", raw_soph)):
+        for i, x in enumerate(group, 1):
+            x["_id"] = f"{prefix}{i}"
+    for x in raw_args + raw_obj + raw_ref + raw_soph:  # renumérotation : on traduit les identifiants d'origine
+        ids.setdefault(key(x.get("id")) or x["_id"], x["_id"])
+        ids.setdefault(x["_id"], x["_id"])
+    for r in raw_ref:
+        ids.setdefault(f"{r['_id']}.CR", f"{r['_id']}.CR")
+
+    def refs(values, self_id=""):
+        out = []
+        for v in values if isinstance(values, list) else [values]:
+            r = ids.get(key(v))
+            if r and r != self_id and r not in out:
+                out.append(r)
+        return out
+
+    def evidence(e):
+        text = _text(e.get("texte") if isinstance(e, dict) else e)
+        return text and {"texte": text, "force": _force(e.get("force") if isinstance(e, dict) else None)}
+
+    def texts(values):
+        return [t for t in (_text(v.get("texte") if isinstance(v, dict) else v) for v in _list(values)[:6]) if t]
+
+    arguments = []
+    for a in raw_args:
+        aid, camp = a["_id"], "contre" if a["_id"][0] == "B" else "pour"
+        arg = {
+            "id": aid, "camp": camp, "titre": _text(a.get("titre") or a.get("conclusion"), 300), "orateur": _text(a.get("orateur"), 80),
+            "type": _text(a.get("type"), 40), "moment": _text(a.get("moment"), 20),
+            "force": _force(a.get("force")), "premisses": texts(a.get("premisses")), "hypotheses": texts(a.get("hypotheses")),
+            "evidences": [e for e in map(evidence, _list(a.get("evidences"))[:6]) if e], "garant": _text(a.get("garant"), 300),
+            "conclusion": _text(a.get("conclusion"), 300),
+            "supports": refs(a.get("supports"), aid), "attacks": refs(a.get("attacks"), aid), "depends_on": refs(a.get("depends_on"), aid),
+        }
+        if not (arg["supports"] or arg["attacks"]):
+            arg["supports" if camp == "pour" else "attacks"] = ["T"]
+        arguments.append(arg)
+    if not arguments:
+        raise RuntimeError("Arbre argumentatif vide")
+
+    objections = [{
+        "id": o["_id"], "cible": (refs(o.get("cible"), o["_id"]) or [""])[0], "texte": _text(o.get("texte") or o.get("titre"), 400),
+        "orateur": _text(o.get("orateur"), 80), "force": _force(o.get("force")), "explicite": o.get("explicite") is not False,
+    } for o in raw_obj]
+    refutations = []
+    for r in raw_ref:
+        cr = r.get("contre_refutation")
+        cr = isinstance(cr, dict) and _text(cr.get("texte")) and {"texte": _text(cr.get("texte")), "orateur": _text(cr.get("orateur"), 80), "force": _force(cr.get("force"))}
+        refutations.append({
+            "id": r["_id"], "cible": next((x for x in refs(r.get("cible"), r["_id"]) if x[0] == "O"), ""), "texte": _text(r.get("texte"), 400),
+            "orateur": _text(r.get("orateur"), 80), "force": _force(r.get("force")), "contre_refutation": cr or None,
+        })
+
+    sophismes = [{
+        "id": s["_id"], "cible": (refs(s.get("cible"), s["_id"]) or [""])[0], "nom": _text(s.get("nom"), 80), "orateur": _text(s.get("orateur"), 80),
+        "extrait": _text(s.get("extrait"), 300), "explication": _text(s.get("explication"), 400), "gravite": _force(s.get("gravite") or s.get("force")),
+    } for s in raw_soph]
+    def camp(value):
+        v = str(value or "").strip().lower()
+        return v if v in ("pour", "contre") else "equilibre"
+    phases = [{
+        "titre": _text(p.get("titre"), 120), "moment": _text(p.get("moment"), 30), "resume": _text(p.get("resume"), 500),
+        "noeuds": refs(p.get("noeuds")), "avantage": camp(p.get("avantage")), "tournant": p.get("tournant") is True,
+    } for p in _list(data.get("phases"))[:8] if isinstance(p, dict) and (_text(p.get("titre")) or _text(p.get("resume")))]
+    dyn = data.get("dynamique") if isinstance(data.get("dynamique"), dict) else {}
+    dynamique = {
+        "initiative": camp(dyn.get("initiative")), "commentaire": _text(dyn.get("commentaire"), 800),
+        "esquives": [t for t in (_text(x, 300) for x in _list(dyn.get("esquives"))[:6]) if t],
+        "terrain": [t for t in (_text(x, 300) for x in _list(dyn.get("terrain"))[:6]) if t],
+    }
+
+    hyp = data.get("hypotheses") if isinstance(data.get("hypotheses"), dict) else {}
+    def assumptions(values):
+        return [{"texte": _text(h.get("texte") if isinstance(h, dict) else h), "porteur": (refs(h.get("porteur")) or [""])[0] if isinstance(h, dict) else ""}
+                for h in _list(values)[:8] if _text(h.get("texte") if isinstance(h, dict) else h)]
+    ev = data.get("evaluation") if isinstance(data.get("evaluation"), dict) else {}
+    concl = data.get("conclusion") if isinstance(data.get("conclusion"), dict) else {"texte": data.get("conclusion")}
+    these = data.get("these") if isinstance(data.get("these"), dict) else {"texte": data.get("these")}
+    def position(p):
+        p = p if isinstance(p, dict) else {}
+        return {"intitule": _text(p.get("intitule"), 300), "orateurs": [_text(n, 80) for n in _list(p.get("orateurs"))[:6] if _text(n)]}
+    avantage = str(concl.get("avantage") or "").strip().lower()
+    return {
+        "question": _text(data.get("question"), 300),
+        "these": {"texte": _text(these.get("texte"), 400), "force": _force(these.get("force"))},
+        "pour": position(data.get("pour")), "contre": position(data.get("contre")),
+        "arguments": arguments, "objections": objections, "refutations": refutations, "sophismes": sophismes,
+        "phases": phases, "dynamique": dynamique,
+        "hypotheses": {
+            "explicites": assumptions(hyp.get("explicites")), "implicites": assumptions(hyp.get("implicites")),
+            "risques": [{"texte": _text(r.get("texte") if isinstance(r, dict) else r), "concerne": refs(r.get("concerne")) if isinstance(r, dict) else []}
+                        for r in _list(hyp.get("risques"))[:8] if _text(r.get("texte") if isinstance(r, dict) else r)],
+        },
+        "evaluation": {k: {"force": _force((ev.get(k) or {}).get("force") if isinstance(ev.get(k), dict) else None),
+                           "commentaire": _text((ev.get(k) or {}).get("commentaire") if isinstance(ev.get(k), dict) else ev.get(k), 400)} for k in EVAL_KEYS},
+        "conclusion": {"texte": _text(concl.get("texte"), 1200), "force": _force(concl.get("force")),
+                       "avantage": avantage if avantage in ("pour", "contre") else "equilibre"},
+    }
+
+
+def build_debate_map(analysis, topic, engine, keys, log):
+    """Arbre argumentatif : question → thèse → positions → arguments → objections → réfutations → évaluation"""
+    log("Construction de l'arbre argumentatif...")
+    carte = normalize_map(llm_json(engine, keys, MAP_PROMPT, map_input(analysis, topic), MAP_MAX_TOKENS))
+    if not carte["sophismes"]:  # le modèle les a omis : on reprend ceux de l'analyse, rattachés à leur orateur
+        carte["sophismes"] = [{
+            "id": f"S{i}", "cible": "", "nom": _text(s.get("nom"), 80), "orateur": _text(o.get("nom"), 80), "extrait": _text(s.get("extrait"), 300),
+            "explication": _text(s.get("explication"), 400), "gravite": "moyenne",
+        } for i, (o, s) in enumerate(((o, s) for o in _list(analysis.get("orateurs")) if isinstance(o, dict)
+                                      for s in _list(o.get("sophismes")) if isinstance(s, dict) and _text(s.get("nom"))), 1) if i <= 12]
+    return carte
+
+
+def analyze_blocks(blocks, engine, keys, topic, user_speakers, context, log, build_map=True):
     """Analyse une transcription longue partie par partie, puis fusionne et synthétise"""
     chunks = group_units(split_units(blocks, CHUNK_CHARS), CHUNK_CHARS)
     if not chunks:
@@ -326,47 +545,40 @@ def analyze_blocks(blocks, engine, keys, topic, user_speakers, context, log):
                 o["these_principale"] = str(theses[o["nom"].lower()])
     except Exception as e:
         log(f"⚠ Synthèse finale indisponible ({str(e)[:120]}) : résumés des parties utilisés")
-    return {"orateurs": orateurs, "synthese": synthese, "deroule": summaries, "parties": total, "parties_en_echec": failed}
+    result = {"orateurs": orateurs, "synthese": synthese, "deroule": summaries, "parties": total, "parties_en_echec": failed}
+    if build_map:
+        try:
+            result["carte"] = build_debate_map(result, topic, engine, keys, log)
+        except JobCanceled:
+            raise
+        except Exception as e:
+            log(f"⚠ Arbre argumentatif indisponible ({str(e)[:120]}) : il pourra être construit depuis l'onglet Structure")
+    return result
 
 
-def read_settings(payload, with_transcription):
-    """Valide moteurs et clés avant de lancer une tâche"""
-    keys = {"gemini": str(payload.get("apiKey") or "").strip(), "groq": str(payload.get("groqKey") or "").strip()}
-    analysis_engine = payload.get("analysisEngine") or ("groq" if keys["groq"] else "gemini")
-    if analysis_engine not in ANALYSIS_ENGINES:
-        raise ValueError(f"Moteur d'analyse inconnu : {analysis_engine}")
-    needed = {analysis_engine}
-    transcribe_engine = None
-    if with_transcription:
-        transcribe_engine = payload.get("transcribeEngine") or "groq-turbo"
-        if transcribe_engine not in ts.ENGINES:
-            raise ValueError(f"Moteur de transcription inconnu : {transcribe_engine}")
-        if transcribe_engine.startswith("groq"):
-            needed.add("groq")
-        elif transcribe_engine == "gemini":
-            needed.add("gemini")
-    labels = {"groq": "clé API Groq", "gemini": "clé API Google AI"}
-    missing = [labels[k] for k in sorted(needed) if not keys[k]]
-    if missing:
-        raise ValueError(f"Il manque : {', '.join(missing)} (voir Configuration).")
-    if "groq" in needed:
-        check_groq_key(keys["groq"])
+def read_settings(payload, with_transcription, ctx, label):
+    """Vérifie l'accès (compte, droits, quota) et récupère la configuration IA définie par l'administrateur"""
+    headers, ip = ctx
+    cfg = community.llm_access(headers, ip, "analyze", label, with_transcription)
+    if cfg["analysis_engine"] == "groq" or (with_transcription and cfg["transcribe_engine"].startswith("groq")):
+        try:
+            check_groq_key(cfg["keys"]["groq"])
+        except ValueError:
+            raise community.ApiError(503, "Le modèle IA est indisponible (clé refusée) : prévenez l’administrateur.")
     raw_speakers = payload.get("speakers") if isinstance(payload.get("speakers"), list) else []
-    return {
-        "keys": keys,
-        "analysis_engine": analysis_engine,
-        "transcribe_engine": transcribe_engine,
+    return cfg | {
+        "transcribe_engine": cfg["transcribe_engine"] if with_transcription else None,
         "topic": str(payload.get("topic") or "").strip()[:300],
         "speakers": [str(s).strip()[:80] for s in raw_speakers[:10] if str(s).strip()],
     }
 
 
-def youtube_work(payload):
+def youtube_work(payload, ctx):
     """Tâche : YouTube → transcription → analyse"""
     url = str(payload.get("url") or "").strip()
     if not re.match(r"^https?://", url):
         raise ValueError("URL YouTube invalide.")
-    cfg = read_settings(payload, with_transcription=True)
+    cfg = read_settings(payload, True, ctx, "youtube")
 
     def work(log):
         tr = ts.transcribe_youtube(url, cfg["transcribe_engine"], cfg["keys"], log=log)
@@ -380,16 +592,103 @@ def youtube_work(payload):
     return work
 
 
-def text_work(payload):
+def text_work(payload, ctx):
     """Tâche : transcription déjà disponible (micro, collage, re-analyse) → analyse"""
     transcript = str(payload.get("transcript") or "")
     if not transcript.strip():
         raise ValueError("Transcription vide.")
-    cfg = read_settings(payload, with_transcription=False)
+    cfg = read_settings(payload, False, ctx, "text")
     context = str(payload.get("context") or "")[:2000]
     blocks = [{"start": None, "text": line} for line in transcript.splitlines() if line.strip()]
+    build_map = not payload.get("skipMap")
     return lambda log: analyze_blocks(blocks, cfg["analysis_engine"], cfg["keys"], cfg["topic"],
-                                      cfg["speakers"], context, log)
+                                      cfg["speakers"], context, log, build_map)
+
+
+def map_work(payload, ctx):
+    """Tâche : (re)construit l'arbre argumentatif d'un débat déjà analysé"""
+    analysis = payload.get("analysis")
+    if not isinstance(analysis, dict) or not _list(analysis.get("orateurs")):
+        raise ValueError("Analyse absente : lancez d'abord l'analyse du débat.")
+    cfg = read_settings(payload, False, ctx, "map")
+    return lambda log: build_debate_map(analysis, cfg["topic"], cfg["analysis_engine"], cfg["keys"], log)
+
+
+FILE_MAX_BYTES = 300 * 1024 * 1024
+
+
+def file_work(path, title, cfg):
+    """Tâche : fichier audio/vidéo envoyé → découpage → transcription (moteur de l'administrateur) → analyse"""
+    def work(log):
+        engine, keys = cfg["transcribe_engine"], cfg["keys"]
+        try:
+            with tempfile.TemporaryDirectory(prefix="rhetora-file-") as folder:
+                log(f"[1/4] Fichier reçu ({os.path.getsize(path) / 1024 / 1024:.1f} Mo)")
+                log(f"[2/4] Découpage en segments de {ts.SEGMENT_SECONDS // 60} min...")
+                segments = ts.split_audio(path, folder)
+                total = len(segments)
+                workers = 1 if engine == "local" else ts.MAX_WORKERS
+                log(f"[3/4] Transcription {engine} ({total} segment(s), {workers} en parallèle)...")
+                texts, errors = [None] * total, {}
+
+                def run(i):
+                    try:
+                        texts[i] = ts.transcribe_segment(engine, keys, segments[i], i, total, None)
+                        errors.pop(i, None)
+                        log(f"   ✓ Segment {i + 1}/{total} ({len(texts[i])} caractères)")
+                    except JobCanceled:
+                        raise
+                    except Exception as e:
+                        errors[i] = str(e)
+                        log(f"   ✗ Segment {i + 1}/{total}: {str(e)[:120]}")
+
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    list(pool.map(run, range(total)))
+                if errors and engine != "local" and not any(re.search(r"HTTP 40[13]", e) for e in errors.values()):
+                    log(f"      Nouvelle passe sur {len(errors)} segment(s) en échec dans {ts.ROUND_PAUSE}s...")
+                    time.sleep(ts.ROUND_PAUSE)
+                    for i in sorted(errors):
+                        run(i)
+                if len(errors) == total:
+                    raise RuntimeError(next(iter(errors.values())))
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        blocks = [{"start": i * ts.SEGMENT_SECONDS, "duration": ts.SEGMENT_SECONDS, "text": t}
+                  for i, t in enumerate(texts) if i not in errors and t]
+        if not blocks:
+            raise RuntimeError("Aucune parole détectée dans le fichier.")
+        log(f"[4/4] {'✓ Complet' if not errors else f'⚠ Partiel ({len(errors)} segment(s) manquant(s))'}")
+        entries = [{"time": fmt_time(g[0][0]), "text": " ".join(text for _, text in g)}
+                   for g in group_units(split_units(blocks, ENTRY_CHARS), ENTRY_CHARS)]
+        analysis = analyze_blocks(blocks, cfg["analysis_engine"], keys, cfg["topic"] or title, cfg["speakers"], "", log)
+        return {"title": title, "entries": entries, "analysis": analysis,
+                "failedSegments": [i + 1 for i in sorted(errors)], "captionSegments": []}
+    return work
+
+
+def hook_chat(cfg, system, user, max_tokens):
+    return llm_json(cfg["analysis_engine"], cfg["keys"], system, user, max_tokens)
+
+
+def hook_test(cfg):
+    """Test du modèle configuré par l'administrateur : modèles disponibles + court échange"""
+    started, models = time.time(), []
+    if cfg["analysis_engine"] == "groq":
+        req = urllib.request.Request("https://api.groq.com/openai/v1/models", headers={
+            "Authorization": f"Bearer {cfg['keys']['groq']}", "User-Agent": "arbitre/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = json.loads(r.read().decode("utf-8")).get("data") or []
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"Groq HTTP {e.code} : {http_error_message(e)}")
+        models = sorted(str(m.get("id")) for m in data if m.get("id") and not re.search(r"whisper|tts|guard|orpheus", str(m.get("id")), re.I))
+    reply = llm_json(cfg["analysis_engine"], cfg["keys"], 'Réponds uniquement en JSON : {"message":"string"}',
+                     "Dis bonjour en cinq mots maximum.", 300)
+    return {"ok": True, "engine": cfg["analysis_engine"], "models": models, "latency": round(time.time() - started, 1),
+            "reply": str(reply.get("message") or "")[:200]}
 
 
 jobs = {}
@@ -540,16 +839,10 @@ LIVE_HALLUCINATION = re.compile(
 )
 
 
-def transcribe_live(headers, audio):
-    """Transcrit un segment enregistré au micro (WebM/Ogg/MP4) → {text}"""
-    engine = (headers.get("X-Engine") or "groq-turbo").strip()
-    if engine not in ts.ENGINES:
-        raise ValueError(f"Moteur de transcription inconnu : {engine}")
-    keys = {"groq": (headers.get("X-Groq-Key") or "").strip(), "gemini": (headers.get("X-Gemini-Key") or "").strip()}
-    if engine.startswith("groq") and not keys["groq"]:
-        raise ValueError("Clé Groq manquante : ajoutez-la dans Configuration ou choisissez « Whisper local ».")
-    if engine == "gemini" and not keys["gemini"]:
-        raise ValueError("Clé Google AI manquante : ajoutez-la dans Configuration ou choisissez « Whisper local ».")
+def transcribe_live(headers, audio, ip):
+    """Transcrit un segment enregistré au micro (WebM/Ogg/MP4) → {text} avec le moteur choisi par l'administrateur"""
+    cfg = community.llm_access(headers, ip, "transcribe", "live")
+    engine, keys = cfg["transcribe_engine"], cfg["keys"]
     lang = (headers.get("X-Lang") or "").strip().lower()
     lang = lang if re.fullmatch(r"[a-z]{2}", lang) else None
     if not audio:
@@ -572,17 +865,85 @@ def transcribe_live(headers, audio):
 
 
 class Handler(SimpleHTTPRequestHandler):
-    routes = {"/api/analyze-youtube": youtube_work, "/api/analyze-text": text_work}
+    routes = {"/api/analyze-youtube": youtube_work, "/api/analyze-text": text_work, "/api/debate-map": map_work}
 
-    def send_json(self, status, data):
+    def send_json(self, status, data, headers=()):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for key, value in headers:
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Referrer-Policy", "same-origin")
+        super().end_headers()
+
+    def community_api(self, method):
+        """Routes comptes / communauté / administration. Renvoie True si la requête a été traitée."""
+        parsed = urllib.parse.urlsplit(self.path)
+        if not community.handles(parsed.path):
+            return False
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= community.MAX_BODY:
+            self.send_json(413, {"error": "Requête trop volumineuse."})
+            return True
+        body = self.rfile.read(length) if length else b""
+        status, data, headers = community.handle(method, parsed.path, parsed.query, self.headers, body, self.client_address[0])
+        if isinstance(data, community.Binary):  # image : identifiant aléatoire immuable, servie sans exécution possible
+            self.send_response(status)
+            self.send_header("Content-Type", data.mime)
+            self.send_header("Content-Length", str(len(data.data)))
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.end_headers()
+            self.wfile.write(data.data)
+        elif data is None:
+            self.send_response(status)
+            for key, value in headers:
+                self.send_header(key, value)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self.send_json(status, data, headers)
+        return True
+
+    def static_allowed(self):
+        path = posixpath.normpath(urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).replace("\\", "/"))
+        if path in ("/", "."):
+            self.send_response(302)
+            self.send_header("Location", "/arbitre.html")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+        if not STATIC_RE.match(path):
+            self.send_error(404)
+            return False
+        return True
+
+    def do_HEAD(self):
+        if self.static_allowed():
+            super().do_HEAD()
+
+    def do_PUT(self):
+        if not self.community_api("PUT"):
+            self.send_error(404)
+
+    def do_PATCH(self):
+        if not self.community_api("PATCH"):
+            self.send_error(404)
+
     def do_GET(self):
+        if self.community_api("GET"):
+            return
         parsed = urllib.parse.urlsplit(self.path)
         api = {"/api/explore": explore_youtube, "/api/oembed": youtube_oembed}.get(parsed.path)
         if api:
@@ -595,7 +956,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(502, {"error": f"Requête YouTube impossible : {e}"})
             return
         if not self.path.startswith("/api/jobs/"):
-            super().do_GET()
+            if self.static_allowed():
+                super().do_GET()
             return
         with jobs_lock:
             job = jobs.get(self.path[len("/api/jobs/"):])
@@ -606,12 +968,23 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json(404, {"error": "Tâche inconnue ou expirée (serveur redémarré ?)."})
 
     def do_POST(self):
+        if self.community_api("POST"):
+            return
+        ctx = (self.headers, self.client_address[0])
+        if self.path == "/api/analyze-file":
+            self.analyze_file(ctx)
+            return
         if self.path == "/api/transcribe":
             try:
+                if self.headers.get("X-Rhetora") != "1":
+                    raise community.ApiError(403, "Requête refusée.")
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= LIVE_MAX_BYTES:
                     raise ValueError("Segment audio vide ou trop volumineux.")
-                self.send_json(200, transcribe_live(self.headers, self.rfile.read(length)))
+                audio = self.rfile.read(length)
+                self.send_json(200, transcribe_live(self.headers, audio, ctx[1]))
+            except community.ApiError as e:
+                self.send_json(e.status, {"error": str(e)})
             except ValueError as e:
                 self.send_json(400, {"error": str(e)})
             except Exception as e:
@@ -623,17 +996,57 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(404)
             return
         try:
+            if self.headers.get("X-Rhetora") != "1":
+                raise community.ApiError(403, "Requête refusée.")
             length = int(self.headers.get("Content-Length", "0"))
+            if not 0 <= length <= 20 * 1024 * 1024:
+                raise ValueError("Requête trop volumineuse.")
             payload = json.loads(self.rfile.read(length) or b"{}")
             if not isinstance(payload, dict):
                 raise ValueError("Requête invalide.")
-            work = make_work(payload)
+            work = make_work(payload, ctx)
+        except community.ApiError as e:
+            self.send_json(e.status, {"error": str(e)})
+            return
         except ValueError as e:
             self.send_json(400, {"error": str(e)})
             return
         self.send_json(202, {"jobId": start_job(work)})
 
+    def analyze_file(self, ctx):
+        """Reçoit un fichier audio/vidéo (corps brut, en flux vers un fichier temporaire) et lance son analyse"""
+        path = None
+        try:
+            if self.headers.get("X-Rhetora") != "1":
+                raise community.ApiError(403, "Requête refusée.")
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= FILE_MAX_BYTES:
+                raise ValueError(f"Fichier vide ou trop volumineux ({FILE_MAX_BYTES // 1024 // 1024} Mo maximum).")
+            title = " ".join(urllib.parse.unquote(self.headers.get("X-Filename") or "").split())[:200] or "Fichier audio"
+            title = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", title) or title
+            topic = " ".join(urllib.parse.unquote(self.headers.get("X-Topic") or "").split())[:300]
+            cfg = read_settings({"topic": topic}, True, ctx, "file")
+            fd, path = tempfile.mkstemp(prefix="rhetora-upload-")
+            remaining = length
+            with os.fdopen(fd, "wb") as f:
+                while remaining:
+                    chunk = self.rfile.read(min(remaining, 1 << 20))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    remaining -= len(chunk)
+            if remaining:
+                raise ValueError("Envoi du fichier interrompu.")
+        except (community.ApiError, ValueError) as e:
+            if path:
+                os.remove(path)
+            self.send_json(getattr(e, "status", 400), {"error": str(e)})
+            return
+        self.send_json(202, {"jobId": start_job(file_work(path, title, cfg))})
+
     def do_DELETE(self):
+        if self.community_api("DELETE"):
+            return
         if not self.path.startswith("/api/jobs/"):
             self.send_error(404)
             return
@@ -648,5 +1061,12 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    community.init()
+    community.HOOKS.update(chat=hook_chat, test=hook_test)
     print(f"http://localhost:{PORT}/arbitre.html")
+    host = os.environ.get("ARBITRE_HOST", "")  # ex. IP Wi-Fi pour un accès depuis le téléphone (en plus de localhost)
+    if host and host != "127.0.0.1":
+        lan = ThreadingHTTPServer((host, PORT), Handler)
+        threading.Thread(target=lan.serve_forever, daemon=True).start()
+        print(f"Réseau local : http://{host}:{PORT}/arbitre.html")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

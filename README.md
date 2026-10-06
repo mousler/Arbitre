@@ -1,4 +1,4 @@
-# Ergo — l’arbitre de vos débats
+# rhetora — l’arbitre de vos débats
 
 **Analyseur intelligent de débats avec IA** - Extrait et analyse les arguments, sophismes et faits factuels directement depuis les vidéos YouTube, sans limite de durée.
 
