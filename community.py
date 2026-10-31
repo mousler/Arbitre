@@ -29,9 +29,10 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from http.cookies import CookieError, SimpleCookie
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+DATA_DIR = os.path.abspath(os.environ.get("RHETORA_DATA_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
 DB_PATH = os.path.join(DATA_DIR, "rhetora.db")
-COOKIE = "rh_session"
+# Nom distinct en sandbox : les cookies d'hôte ne sont pas isolés par port sur 127.0.0.1.
+COOKIE = "rh_sim_session" if os.environ.get("RHETORA_SIMULATION_MODE") == "1" else "rh_session"
 SESSION_TTL = 30 * 86400
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 3_000_000
@@ -296,11 +297,13 @@ def _limit(key, limit, window, message="Trop de requêtes : patientez un peu."):
 
 
 @contextmanager
-def tx():
+def tx(immediate=False):
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
+        if immediate:
+            conn.execute("BEGIN IMMEDIATE")
         yield conn
         conn.commit()
     except BaseException:
@@ -838,7 +841,11 @@ def handle(method, path, query, headers, body, ip):
                 raise ApiError(400, "Requête invalide.")
             if not isinstance(payload, dict):
                 raise ApiError(400, "Requête invalide.")
-        with tx() as conn:
+        allocates_id = method == "POST" and (
+            path in ("/api/auth/register", "/api/community/posts", "/api/community/lives")
+            or re.fullmatch(r"/api/community/posts/\d+/comments", path)
+        )
+        with tx(immediate=allocates_id) as conn:
             maintenance(conn)
             req = Req(conn, query, headers, payload, ip)
             _load_user(req)

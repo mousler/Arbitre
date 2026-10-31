@@ -27,6 +27,12 @@ except ImportError:
 
 PORT = 8765
 YDL_BASE = {"quiet": True, "noplaylist": True, "compat_opts": ["no-certifi"]}  # certificats système (proxy)
+# Audio HLS bas débit (fragments parallélisables) puis audio léger : la transcription réencode de toute façon en 32 kbit/s.
+AUDIO_FORMAT = "233/234/wa[acodec^=opus]/wa/bestaudio/best"
+FRAGMENT_WORKERS = 8  # le débit YouTube est plafonné par connexion (~20 Kio/s mesurés derrière le proxy)
+# « dashy » découpe aussi les formats HTTP (webm, m4a) en plages d'octets téléchargeables en parallèle.
+YDL_DOWNLOAD = {"format": AUDIO_FORMAT, "concurrent_fragment_downloads": FRAGMENT_WORKERS,
+                "extractor_args": {"youtube": {"formats": ["dashy"]}}}
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-latest"]
@@ -333,14 +339,18 @@ def transcribe_youtube(url, engine, keys, log=print):
     with tempfile.TemporaryDirectory() as folder:
         output = os.path.join(folder, "source.%(ext)s")
         log("[1/4] Téléchargement audio...")
-        with yt_dlp.YoutubeDL({**YDL_BASE, "format": "bestaudio/best", "outtmpl": output}) as dl:
+        started = time.monotonic()
+        with yt_dlp.YoutubeDL({**YDL_BASE, **YDL_DOWNLOAD, "outtmpl": output}) as dl:
             info = dl.extract_info(url, download=True)
+        elapsed = time.monotonic() - started
 
         files = glob.glob(os.path.join(folder, "source.*"))
         if not files:
             raise RuntimeError("Aucun fichier téléchargé")
         path = files[0]
-        log(f"      {os.path.basename(path)} ({os.path.getsize(path) / 1024 / 1024:.1f} Mo)")
+        size = os.path.getsize(path) / 1024 / 1024
+        log(f"      {os.path.basename(path)} ({size:.1f} Mo, format {info.get('format_id', '?')}, "
+            f"{elapsed:.0f} s, {size * 1024 / max(elapsed, 0.1):.0f} Kio/s)")
 
         log(f"[2/4] Découpage en segments de {SEGMENT_SECONDS // 60} min...")
         seg_folder = os.path.join(folder, "segments")

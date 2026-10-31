@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>rhetora — laboratoire de simulation</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090a0d;
+      --panel: #121419;
+      --panel-raised: #191c23;
+      --line: rgba(255,255,255,.09);
+      --line-strong: rgba(255,255,255,.16);
+      --text: #f5f6f7;
+      --muted: #9b9faa;
+      --quiet: #6f7480;
+      --accent: #9f8cff;
+      --accent-soft: rgba(159,140,255,.14);
+      --green: #63d6a5;
+      --green-soft: rgba(99,214,165,.13);
+      --blue: #77b8ff;
+      --yellow: #f1c96a;
+      --red: #ff7b78;
+      --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      --sans: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--text);
+      background-color: var(--bg);
+      background-image: linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+      background-size: 32px 32px;
+      font: 14px/1.5 var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    button, select, input { font: inherit; }
+    button, a, select { -webkit-tap-highlight-color: transparent; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .shell { max-width: 1480px; margin: 0 auto; padding: 0 34px 48px; }
+    .topbar { height: 68px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 11px; color: var(--text); text-decoration: none; }
+    .brand-mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(145deg, #806dff, #d55d9e); font-weight: 800; }
+    .brand-name { font-size: 17px; font-weight: 800; letter-spacing: 0; }
+    .brand-sub { margin-left: 5px; color: var(--muted); font-size: 12px; font-weight: 600; }
+    .top-link { color: var(--muted); text-decoration: none; font-size: 13px; }
+    .top-link:hover { color: var(--text); }
+    main { padding-top: 32px; }
+    .heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+    .eyebrow { margin: 0 0 7px; color: var(--accent); font: 700 11px/1.2 var(--mono); text-transform: uppercase; }
+    h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 750; }
+    .intro { max-width: 650px; margin: 9px 0 0; color: var(--muted); }
+    .local-flag { display: inline-flex; align-items: center; gap: 8px; padding: 8px 11px; border: 1px solid rgba(99,214,165,.28); border-radius: 6px; color: var(--green); background: var(--green-soft); white-space: nowrap; font-size: 12px; font-weight: 700; }
+    .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px currentColor; }
+    .controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: rgba(18,20,25,.94); }
+    .field { display: grid; gap: 6px; }
+    .field label { color: var(--muted); font-size: 11px; font-weight: 700; }
+    select, .field input { width: 100%; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--text); background: var(--panel-raised); }
+    .run-button, .stop-button { grid-column: span 2; }
+    .run-button { height: 40px; padding: 0 18px; border: 0; border-radius: 5px; color: #111015; background: var(--accent); font-weight: 800; cursor: pointer; transition: filter .16s, transform .16s; }
+    .run-button:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+    .run-button:disabled { opacity: .5; cursor: wait; }
+    .stop-button { height: 40px; padding: 0 14px; border: 1px solid rgba(255,123,120,.5); border-radius: 5px; color: var(--red); background: transparent; font-weight: 750; cursor: pointer; }
+    .stop-button:hover:not(:disabled) { background: rgba(255,123,120,.12); }
+    .stop-button:disabled { opacity: .35; cursor: not-allowed; }
+    .control-note { grid-column: 2 / 4; align-self: center; padding-left: 4px; color: var(--quiet); font-size: 12px; }
+    .status { grid-column: 4 / 5; display: inline-flex; align-items: center; gap: 8px; justify-self: end; color: var(--muted); font-size: 12px; font-weight: 750; }
+    .status.running { color: var(--blue); }
+    .status.passed { color: var(--green); }
+    .status.failed { color: var(--red); }
+    .progress-block { margin: 16px 0 22px; }
+    .progress-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px; color: var(--muted); font-size: 12px; }
+    .progress-meta strong { color: var(--text); font-weight: 650; }
+    .progress-track { height: 5px; overflow: hidden; border-radius: 5px; background: #22252d; }
+    .progress-bar { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--green)); transition: width .3s ease; }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 24px; border: 1px solid var(--line); border-radius: 8px; background: rgba(18,20,25,.94); }
+    .metric { min-width: 0; padding: 17px 20px; border-right: 1px solid var(--line); }
+    .metric:last-child { border-right: 0; }
+    .metric-label { display: block; color: var(--muted); font-size: 11px; font-weight: 650; }
+    .metric-value { display: block; margin-top: 3px; font: 750 24px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+    .metric-detail { display: block; margin-top: 4px; color: var(--quiet); font-size: 11px; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(340px, .92fr); gap: 18px; align-items: start; }
+    .section { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: rgba(18,20,25,.96); }
+    .section-head { min-height: 54px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 17px; border-bottom: 1px solid var(--line); }
+    h2 { margin: 0; font-size: 13px; font-weight: 750; }
+    .section-meta { color: var(--quiet); font: 11px var(--mono); }
+    .events { max-height: 360px; overflow: auto; margin: 0; padding: 4px 17px; list-style: none; }
+    .event { display: grid; grid-template-columns: 67px minmax(0,1fr) auto; align-items: center; gap: 12px; min-height: 39px; border-bottom: 1px solid rgba(255,255,255,.045); }
+    .event:last-child { border-bottom: 0; }
+    .event-time, .event-latency { color: var(--quiet); font: 10px var(--mono); font-variant-numeric: tabular-nums; }
+    .event-label { overflow: hidden; color: #d7d9df; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .event-status { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .event-status.bad { background: var(--red); }
+    .empty { padding: 28px 17px; color: var(--quiet); text-align: center; font-size: 12px; }
+    .route-table { width: 100%; border-collapse: collapse; text-align: left; }
+    .route-table th { padding: 10px 12px; color: var(--quiet); font-size: 10px; font-weight: 700; }
+    .route-table td { padding: 11px 12px; border-top: 1px solid rgba(255,255,255,.05); font-size: 11px; }
+    .route-table th:first-child, .route-table td:first-child { padding-left: 17px; }
+    .route-table th:last-child, .route-table td:last-child { padding-right: 17px; text-align: right; }
+    .route-name { color: #d9d4ff; font-family: var(--mono); font-size: 10px; }
+    .route-ok { color: var(--green); font-variant-numeric: tabular-nums; }
+    .route-latency { color: var(--muted); font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+    .detail-grid { display: grid; grid-template-columns: minmax(340px, .82fr) minmax(0, 1.18fr); gap: 18px; margin-top: 18px; }
+    .actor-filter { width: 180px; height: 30px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--text); background: var(--panel-raised); font-size: 11px; }
+    .actor-scroll, .social-scroll { max-height: 340px; overflow: auto; }
+    .actor-table { width: 100%; border-collapse: collapse; text-align: left; }
+    .actor-table th { position: sticky; top: 0; padding: 9px 10px; color: var(--quiet); background: var(--panel); font-size: 10px; text-align: left; }
+    .actor-table td { max-width: 180px; padding: 9px 10px; overflow: hidden; border-top: 1px solid rgba(255,255,255,.05); color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .actor-table th:first-child, .actor-table td:first-child { padding-left: 16px; }
+    .actor-name { color: var(--text) !important; font-family: var(--mono); font-size: 10px !important; }
+    .actor-state { color: var(--green); }
+    .social-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; background: var(--line); }
+    .social-item { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: start; gap: 10px; padding: 12px 14px; background: var(--panel); }
+    .social-avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #6d64ca, #36928e); font: 700 10px var(--mono); }
+    .social-main { min-width: 0; }
+    .social-line { color: var(--text); font-size: 11px; }
+    .social-line strong { color: #c9c0ff; font-weight: 750; }
+    .social-detail { margin-top: 3px; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }
+    .social-peer { color: var(--blue); }
+    .social-time { color: var(--quiet); font: 10px var(--mono); white-space: nowrap; }
+    .under-grid { display: grid; grid-template-columns: 1fr auto; gap: 18px; margin-top: 18px; }
+    .checks { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--line); }
+    .check { display: flex; align-items: center; gap: 9px; min-height: 54px; padding: 0 14px; background: var(--panel); color: var(--muted); font-size: 11px; }
+    .check-mark { color: var(--green); font-weight: 900; }
+    .report-link { align-self: stretch; display: inline-flex; align-items: center; justify-content: center; min-width: 150px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text); text-decoration: none; font-size: 12px; font-weight: 700; }
+    .report-link:hover { border-color: var(--accent); color: #d9d4ff; }
+    .report-link[hidden] { display: none; }
+    .message { min-height: 22px; margin: 10px 0 0; color: var(--red); font-size: 12px; }
+    .audit-section { margin-top: 18px; }
+    .audit-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .audit-table th, .audit-table td { padding: 10px 14px; border-bottom: 1px solid var(--line); text-align: left; font-size: 11px; overflow-wrap: anywhere; }
+    .audit-table th { color: var(--muted); }
+    .audit-table th:nth-child(1) { width: 30%; }
+    .audit-table th:nth-child(2) { width: 13%; }
+    .audit-table th:nth-child(3) { width: 12%; }
+    .audit-table thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+    .audit-table td { vertical-align: top; color: var(--muted); }
+    .audit-table td:first-child { color: var(--text); font-weight: 650; }
+    .audit-table tr.row-failed td:first-child { box-shadow: inset 3px 0 var(--red); }
+    .audit-table tr.row-warning td:first-child { box-shadow: inset 3px 0 var(--yellow); }
+    .check-role { display: block; margin-top: 2px; color: var(--quiet); font-size: 10px; font-weight: 500; }
+    .audit-pass { color: var(--green); }
+    .audit-fail { color: var(--red); }
+    .audit-warn { color: var(--yellow); }
+    .command { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, 560px); align-items: stretch; gap: 18px; margin-bottom: 14px; }
+    .command-title { display: flex; flex-direction: column; justify-content: center; }
+    .guarantees { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .chip { display: inline-flex; align-items: center; padding: 3px 9px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 650; }
+    .chip-ok { border-color: rgba(99,214,165,.28); color: var(--green); background: var(--green-soft); }
+    .run-card { display: grid; gap: 9px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(135deg, rgba(159,140,255,.09), rgba(18,20,25,.96) 55%); }
+    .run-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .run-card .status { justify-self: start; }
+    .run-card .progress-meta { margin: 0; }
+    .run-card .progress-meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .run-actions { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
+    .run-actions .run-button, .run-actions .stop-button { grid-column: auto; }
+    .config-summary { margin: 0; overflow: hidden; color: var(--quiet); font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .settings-toggle { height: 40px; }
+    .settings-toggle.active { border-color: var(--accent); color: #d9d4ff; background: var(--accent-soft); }
+    .report-link { min-width: 0; padding: 4px 10px; font-size: 11px; }
+    .controls { margin-bottom: 14px; }
+    .controls .control-note { grid-column: 1 / -1; padding: 0; }
+    .message:empty { display: none; }
+    .message { margin: 0 0 12px; }
+    .metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 14px; }
+    .metric { padding: 12px 16px; }
+    .metric-value { font-size: 21px; }
+    .metric-link { border: 0; border-right: 1px solid var(--line); color: inherit; background: none; font: inherit; text-align: left; cursor: pointer; }
+    .metric-link:hover { background: var(--panel-raised); }
+    .tabs { display: flex; gap: 4px; margin-bottom: 12px; padding: 4px; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; background: rgba(18,20,25,.94); scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { display: inline-flex; flex: 1 0 auto; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 6px; color: var(--muted); background: none; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+    .tab:hover { color: var(--text); background: var(--panel-raised); }
+    .tab[aria-selected="true"] { color: var(--text); background: var(--accent-soft); box-shadow: inset 0 -2px var(--accent); }
+    .tab-badge { min-width: 19px; padding: 0 6px; border-radius: 999px; color: #1b1606; background: var(--yellow); font: 800 10px/17px var(--mono); }
+    .tab-badge.bad { color: #fff; background: var(--red); }
+    .tab-badge-quiet { color: var(--muted); background: var(--panel-raised); }
+    .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+    [hidden] { display: none !important; }
+    .panel-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr); gap: 14px; align-items: start; }
+    .stack { display: grid; gap: 14px; }
+    .scroll { max-height: clamp(220px, calc(100vh - 470px), 640px); overflow: auto; }
+    .scroll-tall { max-height: clamp(260px, calc(100vh - 470px), 640px); }
+    .stack .scroll { max-height: clamp(130px, calc(50vh - 245px), 320px); }
+    #panel-overview .scroll { max-height: clamp(220px, calc(100vh - 540px), 520px); }
+    .shell { padding-bottom: 12px; }
+    .topbar { height: 54px; }
+    main { padding-top: 16px; }
+    h1 { font-size: 25px; }
+    .eyebrow { margin-bottom: 5px; }
+    .guarantees { margin-top: 9px; }
+    .command { margin-bottom: 12px; }
+    .run-card { gap: 7px; padding: 12px 14px; }
+    .metrics { margin-bottom: 12px; }
+    .metric { padding: 10px 14px; }
+    .metric-value { margin-top: 1px; font-size: 19px; }
+    .metric-detail { margin-top: 2px; }
+    .tabs { margin-bottom: 12px; }
+    .role-cards { margin-bottom: 12px; }
+    .role-card { gap: 6px; padding: 10px 12px; }
+    .section-head { min-height: 46px; padding: 9px 15px; }
+    .route-table thead th { position: sticky; top: 0; background: var(--panel); }
+    .role-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .role-card { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: rgba(18,20,25,.96); font: inherit; text-align: left; cursor: pointer; transition: border-color .16s, transform .16s; }
+    .role-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .role-card-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 750; }
+    .role-card-head strong { font: 750 14px var(--mono); }
+    .role-bar { display: flex; height: 5px; overflow: hidden; border-radius: 5px; background: #22252d; }
+    .role-meta { color: var(--quiet); font-size: 11px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 4px; }
+    .filter { padding: 3px 9px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--muted); background: none; font-size: 11px; font-weight: 650; cursor: pointer; }
+    .filter:hover { color: var(--text); }
+    .filter.active { border-color: var(--accent); color: #d9d4ff; background: var(--accent-soft); }
+    .site-help { max-width: 760px; margin: 0; color: var(--quiet); font-size: 12px; }
+    .panel .sandbox-panel { margin-bottom: 12px; }
+    .agents-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 18px; margin-top: 18px; }
+    .agent-feed { margin: 0; padding: 0; list-style: none; }
+    .agent-item { display: grid; grid-template-columns: 58px 92px minmax(0, 1fr); align-items: start; gap: 10px; padding: 9px 16px; border-bottom: 1px solid rgba(255,255,255,.045); font-size: 11px; }
+    .agent-item.agent-running { background: rgba(119,184,255,.05); }
+    .agent-main { min-width: 0; }
+    .agent-role { color: var(--quiet); font-family: var(--sans); font-weight: 600; }
+    .agent-name { display: block; color: var(--text); font-weight: 700; }
+    .agent-detail { display: -webkit-box; margin-top: 2px; overflow: hidden; color: var(--muted); overflow-wrap: anywhere; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .state { display: inline-block; padding: 1px 6px; border-radius: 3px; font: 700 9px var(--mono); text-transform: uppercase; }
+    .state-running { color: var(--blue); background: rgba(119,184,255,.12); }
+    .state-passed { color: var(--green); background: var(--green-soft); }
+    .state-failed { color: var(--red); background: rgba(255,123,120,.12); }
+    .state-warning { color: var(--yellow); background: rgba(241,201,106,.12); }
+    .compare-body { display: grid; gap: 12px; padding: 14px 17px 17px; }
+    .compare-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--line); }
+    .compare-count { padding: 10px 12px; background: var(--panel); }
+    .compare-count strong { display: block; font: 750 20px/1.2 var(--mono); }
+    .compare-count span { color: var(--quiet); font-size: 10px; }
+    .compare-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 11px; }
+    .compare-list li { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); }
+    .compare-list b { color: var(--text); font: 10px var(--mono); overflow-wrap: anywhere; }
+    .trend-improved { color: var(--green); }
+    .trend-regressed { color: var(--red); }
+    .trend-new { color: var(--blue); }
+    .trend-stable, .trend-missing { color: var(--quiet); }
+    .run-button { grid-column: span 1; }
+    .stop-button { grid-column: span 1; }
+    .sandbox-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) auto; align-items: center; gap: 16px; margin: 0 0 22px; padding: 16px 18px; border: 1px solid rgba(119,184,255,.28); border-radius: 8px; background: linear-gradient(120deg, rgba(119,184,255,.08), rgba(159,140,255,.06)); }
+    .sandbox-panel.closed { border-color: var(--line); background: rgba(18,20,25,.94); }
+    .sandbox-state { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .sandbox-url { color: var(--blue); font-family: var(--mono); font-size: 11px; }
+    .sandbox-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ghost-button { min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--text); background: var(--panel-raised); font-size: 12px; font-weight: 650; cursor: pointer; }
+    .ghost-button:hover:not(:disabled) { border-color: var(--accent); color: #d9d4ff; }
+    .ghost-button:disabled { opacity: .4; cursor: not-allowed; }
+    .social-filter { height: 30px; width: auto; padding: 0 8px; font-size: 11px; }
+    .social-item { width: 100%; border: 0; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+    .social-item:hover, .social-item:focus-visible { background: var(--panel-raised); }
+    .social-kind { display: inline-block; margin-right: 6px; padding: 1px 6px; border-radius: 3px; color: var(--accent); background: var(--accent-soft); font: 700 9px var(--mono); text-transform: uppercase; }
+    .actor-button { max-width: 100%; overflow: hidden; padding: 0; border: 0; color: var(--text); background: none; font: 10px var(--mono); text-align: left; text-overflow: ellipsis; cursor: pointer; }
+    .actor-button:hover { color: #d9d4ff; text-decoration: underline; }
+    .actor-persona { display: block; color: var(--quiet); font: 9px var(--sans); }
+    dialog.detail { width: min(760px, calc(100vw - 28px)); max-height: calc(100vh - 40px); padding: 0; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--text); background: var(--panel); }
+    dialog.detail::backdrop { background: rgba(4,5,8,.7); }
+    .detail-head { position: sticky; top: 0; display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    .detail-head h2 { font-size: 15px; }
+    .detail-body { display: grid; gap: 14px; padding: 16px 18px 20px; }
+    .detail-fields { display: grid; grid-template-columns: 140px minmax(0,1fr); gap: 7px 12px; margin: 0; font-size: 12px; }
+    .detail-fields dt { color: var(--quiet); }
+    .detail-fields dd { margin: 0; overflow-wrap: anywhere; }
+    .detail-content { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: #e3e4e8; font: 12px/1.55 var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .history { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; background: var(--line); }
+    .history .social-item { padding: 10px 12px; }
+    @media (max-width: 980px) {
+      .shell { padding: 0 22px 36px; }
+      .controls { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .run-button, .stop-button { grid-column: auto; }
+      .control-note, .status { grid-column: 1 / -1; justify-self: start; }
+      .workspace { grid-template-columns: 1fr; }
+      .detail-grid { grid-template-columns: 1fr; }
+      .agents-grid { grid-template-columns: 1fr; }
+      .command { grid-template-columns: 1fr; }
+      .panel-grid { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .metric:nth-child(3n) { border-right: 0; }
+      .metric:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+      .role-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .scroll, .scroll-tall, .stack .scroll, #panel-overview .scroll { max-height: 420px; }
+      .sandbox-panel { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .shell { padding: 0 14px 28px; }
+      .topbar { height: 58px; }
+      .brand-sub { display: none; }
+      main { padding-top: 24px; }
+      .heading { align-items: start; flex-direction: column; gap: 13px; }
+      h1 { font-size: 25px; }
+      .controls { grid-template-columns: 1fr 1fr; padding: 13px; gap: 11px; }
+      .run-button { grid-column: 1 / 3; }
+      .stop-button { grid-column: 1 / 3; }
+      .control-note { grid-column: 1 / 3; grid-row: auto; padding: 0; }
+      .status { grid-column: 1 / 3; grid-row: auto; justify-self: start; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+      .metric { padding: 13px; border-bottom: 1px solid var(--line); }
+      .metric:nth-child(2) { border-right: 0; }
+      .metric:nth-child(n+3) { border-bottom: 0; }
+      .metric-value { font-size: 20px; }
+      .actor-filter { width: 130px; }
+      .actor-table td { max-width: 120px; }
+      .social-item { grid-template-columns: 28px minmax(0,1fr); }
+      .social-time { grid-column: 2; }
+      .under-grid { grid-template-columns: 1fr; }
+      .checks { grid-template-columns: 1fr; }
+      .check { min-height: 42px; }
+      .report-link { min-height: 42px; }
+      .event { grid-template-columns: 52px minmax(0,1fr) auto; gap: 8px; }
+      .route-table th, .route-table td { padding-left: 7px; padding-right: 7px; }
+      .route-table th:first-child, .route-table td:first-child { padding-left: 11px; }
+      .route-table th:last-child, .route-table td:last-child { padding-right: 11px; }
+      .audit-table th, .audit-table td { padding: 8px 5px; font-size: 10px; }
+      .detail-fields { grid-template-columns: 1fr; }
+      .agent-item { grid-template-columns: 1fr; gap: 4px; }
+      .compare-counts { grid-template-columns: 1fr 1fr; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+      .metric, .metric:nth-child(3n) { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+      .metric:nth-child(2n) { border-right: 0; }
+      .metric:nth-last-child(-n+2) { border-bottom: 0; }
+      .run-actions { grid-template-columns: 1fr 1fr; }
+      .run-actions .run-button { grid-column: 1 / -1; }
+      .tab { flex: 0 0 auto; padding: 0 11px; font-size: 12px; }
+      .role-cards { gap: 8px; }
+      .filters { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/arbitre.html" aria-label="Retour à Rhetora">
+        <span class="brand-mark" aria-hidden="true">r</span>
+        <span class="brand-name">rhetora</span>
+        <span class="brand-sub">laboratoire local</span>
+      </a>
+      <a class="top-link" href="/arbitre.html">Ouvrir l’application ↗</a>
+    </header>
+
+    <main>
+      <section class="command" aria-labelledby="page-title">
+        <div class="command-title">
+          <p class="eyebrow">Banc de test · Environnement isolé</p>
+          <h1 id="page-title">Simulation Rhetora</h1>
+          <div class="guarantees" aria-label="Garanties de la simulation">
+            <span class="chip chip-ok">✓ Base temporaire</span>
+            <span class="chip chip-ok">✓ Serveur loopback</span>
+            <span class="chip chip-ok">✓ Clés API exclues</span>
+          </div>
+        </div>
+        <div class="run-card">
+          <div class="run-head">
+            <span class="status" id="status"><span class="dot"></span><span>Prêt à démarrer</span></span>
+            <a class="report-link" id="report-link" href="/api/simulation/report" target="_blank" rel="noopener" hidden>Rapport JSON ↗</a>
+          </div>
+          <div class="progress-meta"><strong id="phase">Prêt à démarrer</strong><span id="progress-label">0 requête</span></div>
+          <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+          <div class="run-actions">
+            <button class="run-button" id="run-button" type="submit" form="run-form">Lancer le scénario</button>
+            <button class="stop-button" id="stop-button" type="button" disabled>Arrêter</button>
+            <button class="ghost-button settings-toggle" id="settings-toggle" type="button" aria-expanded="false" aria-controls="run-form">⚙ Paramètres</button>
+          </div>
+          <p class="config-summary" id="config-summary"></p>
+        </div>
+      </section>
+
+      <form class="controls" id="run-form" hidden>
+        <div class="field">
+          <label for="users">Acteurs virtuels</label>
+          <select id="users" name="users">
+            <option value="5">5 utilisateurs</option>
+            <option value="10">10 utilisateurs</option>
+            <option value="25">25 utilisateurs</option>
+            <option value="50" selected>50 utilisateurs</option>
+            <option value="100">100 utilisateurs</option>
+            <option value="250">250 utilisateurs</option>
+            <option value="500">500 utilisateurs</option>
+            <option value="1000">1 000 utilisateurs</option>
+            <option value="2500">2 500 utilisateurs</option>
+            <option value="5000">5 000 utilisateurs</option>
+            <option value="10000">10 000 utilisateurs</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="duration">Durée active</label>
+          <select id="duration" name="duration">
+            <option value="30">30 secondes</option>
+            <option value="60">1 minute</option>
+            <option value="180" selected>3 minutes</option>
+            <option value="300">5 minutes</option>
+            <option value="600">10 minutes</option>
+            <option value="1200">20 minutes</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="concurrency">Actions simultanées</label>
+          <select id="concurrency" name="concurrency">
+            <option value="1">1 en parallèle</option>
+            <option value="3">3 en parallèle</option>
+            <option value="5">5 en parallèle</option>
+            <option value="10" selected>10 en parallèle</option>
+            <option value="25">25 en parallèle</option>
+            <option value="50">50 en parallèle</option>
+            <option value="100">100 en parallèle</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="mode">Comportement</label>
+          <select id="mode" name="mode">
+            <option value="balanced" selected>Écosystème mixte</option>
+            <option value="community">Communauté active</option>
+            <option value="messages">Conversations</option>
+            <option value="reader">Lecture et réactions</option>
+            <option value="creator">Créateurs et analyses</option>
+            <option value="complete">Tous polyvalents</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="signups">Nouvelles inscriptions</label>
+          <select id="signups" name="signups"><option value="0">Aucune</option><option value="6" selected>6 par minute</option><option value="30">30 par minute</option><option value="120">120 par minute</option></select>
+        </div>
+        <div class="field">
+          <label for="visit">Comptes qui se connectent</label>
+          <select id="visit" name="visit"><option value="5">5 % de la population</option><option value="10">10 % de la population</option><option value="25">25 % de la population</option><option value="50">50 % de la population</option><option value="100" selected>Toute la population</option></select>
+        </div>
+        <div class="field">
+          <label for="pace">Rythme par acteur</label>
+          <select id="pace" name="pace"><option value="realistic">Réaliste · 15–25 s</option><option value="load">Charge · 1–3 s</option></select>
+        </div>
+        <div class="field">
+          <label for="ramp">Montée en charge</label>
+          <select id="ramp" name="ramp"><option value="0">Immédiate</option><option value="10" selected>10 secondes</option><option value="30">30 secondes</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option></select>
+        </div>
+        <div class="field">
+          <label for="seed">Graine du scénario</label>
+          <input id="seed" name="seed" type="number" min="0" max="2147483647" step="1" value="42" required>
+        </div>
+        <div class="field">
+          <label for="budget">Budget p95 (ms)</label>
+          <input id="budget" name="budget" type="number" min="1" max="60000" step="1" value="2000" required>
+        </div>
+        <div class="field">
+          <label for="keep-open">Site après le test</label>
+          <select id="keep-open" name="keep-open"><option value="0">Fermer à la fin</option><option value="600">Garder 10 min</option><option value="1800" selected>Garder 30 min</option><option value="3600">Garder 1 h</option></select>
+        </div>
+        <span class="control-note">Sandbox locale · agents QA, performance et sécurité (XSS, IDOR, SQL, en-têtes, fichiers). Les paramètres sont verrouillés pendant un scénario.</span>
+      </form>
+      <p class="message" id="message" role="alert" aria-live="polite"></p>
+
+      <section class="metrics" aria-label="Indicateurs de simulation">
+        <div class="metric"><span class="metric-label">Acteurs connectés</span><strong class="metric-value" id="metric-users">0</strong><span class="metric-detail" id="metric-users-detail">En attente</span></div>
+        <div class="metric"><span class="metric-label">Requêtes</span><strong class="metric-value" id="metric-requests">0</strong><span class="metric-detail" id="metric-throughput">0 requête/s</span></div>
+        <div class="metric"><span class="metric-label">Erreurs</span><strong class="metric-value" id="metric-errors">0</strong><span class="metric-detail">Statuts et contrôles en échec</span></div>
+        <div class="metric"><span class="metric-label">P95 le plus élevé</span><strong class="metric-value" id="metric-p95">—</strong><span class="metric-detail">Latence par route</span></div>
+        <button class="metric metric-link" type="button" data-goto="agents"><span class="metric-label">Contrôles des agents</span><strong class="metric-value" id="metric-checks">—</strong><span class="metric-detail" id="metric-checks-detail">En attente</span></button>
+        <button class="metric metric-link" type="button" data-goto="agents"><span class="metric-label">Évolution</span><strong class="metric-value" id="metric-trend">—</strong><span class="metric-detail" id="metric-trend-detail">Aucune référence</span></button>
+      </section>
+
+      <nav class="tabs" role="tablist" aria-label="Vues de la simulation">
+        <button class="tab" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Vue d’ensemble</button>
+        <button class="tab" role="tab" id="tab-agents" aria-controls="panel-agents" aria-selected="false" data-tab="agents" tabindex="-1">Agents et sécurité <span class="tab-badge" id="tab-agents-badge" hidden></span></button>
+        <button class="tab" role="tab" id="tab-community" aria-controls="panel-community" aria-selected="false" data-tab="community" tabindex="-1">Communauté <span class="tab-badge tab-badge-quiet" id="tab-community-badge" hidden></span></button>
+        <button class="tab" role="tab" id="tab-site" aria-controls="panel-site" aria-selected="false" data-tab="site" tabindex="-1">Site en direct <span class="tab-dot" id="tab-site-dot" hidden></span></button>
+      </nav>
+
+      <div class="panel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
+        <div class="role-cards" id="role-cards" aria-label="Verdicts par équipe"></div>
+        <div class="panel-grid">
+          <section class="section" aria-labelledby="events-title">
+            <div class="section-head"><h2 id="events-title">Requêtes en direct</h2><span class="section-meta" id="event-count">0 événement</span></div>
+            <ol class="events scroll" id="events" aria-live="polite"><li class="empty">L’activité du prochain scénario apparaîtra ici.</li></ol>
+          </section>
+          <section class="section" aria-labelledby="routes-title">
+            <div class="section-head"><h2 id="routes-title">Parcours et latences</h2><span class="section-meta">p95 · ▲ plus lent · ▼ plus rapide</span></div>
+            <div class="scroll">
+              <table class="route-table">
+                <thead><tr><th>Action</th><th>Réussites</th><th>Échecs</th><th>p95</th></tr></thead>
+                <tbody id="routes"><tr><td class="empty" colspan="4">Aucune requête mesurée.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="panel" role="tabpanel" id="panel-agents" aria-labelledby="tab-agents" hidden>
+        <div class="panel-grid">
+          <section class="section" aria-labelledby="audits-title">
+            <div class="section-head">
+              <h2 id="audits-title">Contrôles des agents</h2>
+              <div class="filters" id="audit-filters" role="group" aria-label="Filtrer les contrôles">
+                <button class="filter active" type="button" data-filter="">Tous</button>
+                <button class="filter" type="button" data-filter="issues">À traiter</button>
+                <button class="filter" type="button" data-filter="security">Sécurité</button>
+                <button class="filter" type="button" data-filter="qa">Qualité</button>
+                <button class="filter" type="button" data-filter="performance">Performance</button>
+                <button class="filter" type="button" data-filter="operations">Exploitation</button>
+              </div>
+              <span class="section-meta" id="audit-count">0 contrôle</span>
+            </div>
+            <div class="scroll scroll-tall">
+              <table class="audit-table">
+                <thead><tr><th>Contrôle</th><th>Verdict</th><th>Évolution</th><th>Observation</th></tr></thead>
+                <tbody id="audits"><tr><td colspan="4" class="empty">En attente des contrôles.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <div class="stack">
+            <section class="section" aria-labelledby="compare-title">
+              <div class="section-head"><h2 id="compare-title">Évolution</h2><span class="section-meta" id="compare-baseline">Aucune référence</span></div>
+              <div class="compare-body scroll" id="compare-body"><p class="empty">La comparaison apparaîtra dès les premiers contrôles.</p></div>
+            </section>
+            <section class="section" aria-labelledby="agents-title">
+              <div class="section-head"><h2 id="agents-title">Agents en direct</h2><span class="section-meta" id="agent-count">0 contrôle</span></div>
+              <ol class="agent-feed scroll" id="agent-feed" aria-live="polite"><li class="empty">Les agents d’exploitation, de qualité, de performance et de sécurité apparaîtront ici.</li></ol>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" role="tabpanel" id="panel-community" aria-labelledby="tab-community" hidden>
+        <div class="panel-grid">
+          <section class="section" aria-labelledby="actors-title">
+            <div class="section-head">
+              <h2 id="actors-title">Comptes virtuels</h2>
+              <input class="actor-filter" id="actor-filter" type="search" placeholder="Filtrer les comptes" aria-label="Filtrer les comptes virtuels">
+              <span class="section-meta" id="actor-count">0 compte</span>
+            </div>
+            <div class="scroll scroll-tall">
+              <table class="actor-table">
+                <thead><tr><th>Compte</th><th>État</th><th>Actions</th></tr></thead>
+                <tbody id="actors"><tr><td colspan="3" class="empty">Les comptes apparaîtront au démarrage.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="section" aria-labelledby="social-title">
+            <div class="section-head">
+              <h2 id="social-title">Fil social simulé</h2>
+              <select class="social-filter" id="social-kind" aria-label="Filtrer le fil social">
+                <option value="">Toutes les actions</option>
+                <option value="post">Publications</option>
+                <option value="comment">Commentaires</option>
+                <option value="reaction">Réactions</option>
+                <option value="message">Messages privés</option>
+                <option value="conversation">Lectures de conversations</option>
+                <option value="analysis">Analyses</option>
+                <option value="feed">Lecture du fil</option>
+                <option value="session">Sessions</option>
+                <option value="error">Erreurs</option>
+                <option value="signup">Inscriptions</option>
+                <option value="follow">Abonnements</option>
+                <option value="reply">Réponses</option>
+                <option value="verdict">Votes</option>
+                <option value="report">Signalements</option>
+                <option value="moderation">Modération</option>
+                <option value="notification">Notifications</option>
+              </select>
+              <span class="section-meta" id="social-count">0 interaction</span>
+            </div>
+            <div class="scroll scroll-tall"><ol class="social-list" id="social-feed"><li class="empty">Les publications et échanges apparaîtront ici.</li></ol></div>
+          </section>
+        </div>
+      </div>
+
+      <div class="panel" role="tabpanel" id="panel-site" aria-labelledby="tab-site" hidden>
+        <section class="sandbox-panel closed" id="sandbox-panel" aria-labelledby="sandbox-title">
+          <div>
+            <h2 id="sandbox-title">Rhetora en direct</h2>
+            <p class="sandbox-state" id="sandbox-state">Le site sandbox s’ouvrira au lancement du scénario.</p>
+          </div>
+          <div class="field">
+            <label for="sandbox-user">Voir le site en tant que</label>
+            <select id="sandbox-user" disabled><option value="">Aucun compte</option></select>
+          </div>
+          <div class="sandbox-actions">
+            <button class="ghost-button" type="button" data-open="feed" disabled>Fil</button>
+            <button class="ghost-button" type="button" data-open="messages" disabled>Messagerie</button>
+            <button class="ghost-button" type="button" data-open="profile" disabled>Profil</button>
+            <button class="ghost-button" type="button" data-open="history" disabled>Historique</button>
+          </div>
+        </section>
+        <p class="site-help">Le site s’ouvre dans un onglet séparé, connecté sous le compte choisi. Le réglage « Site après le test » le garde consultable une fois le rapport produit.</p>
+      </div>
+    </main>
+  </div>
+
+  <dialog class="detail" id="detail" aria-labelledby="detail-title">
+    <div class="detail-head">
+      <div><h2 id="detail-title">Détail</h2><p class="sandbox-state" id="detail-subtitle"></p></div>
+      <button class="ghost-button" type="button" id="detail-close">Fermer</button>
+    </div>
+    <div class="detail-body" id="detail-body"></div>
+  </dialog>
+
+  <script>
+    const labels = {
+      "account.me": "Compte · profil courant",
+      "account.profile": "Compte · mise à jour du profil",
+      "analysis.poll": "Analyse · progression de la tâche",
+      "analysis.submit": "Analyse · lancement du texte",
+      "auth.login": "Authentification · connexion",
+      "auth.register": "Authentification · inscription",
+      "community.comment": "Communauté · commentaire",
+      "community.feed": "Communauté · lecture du fil",
+      "community.publish": "Communauté · publication de l’analyse",
+      "community.react": "Communauté · réaction",
+      "messages.inbox": "Messages · boîte de réception",
+      "messages.send": "Messages · envoi privé",
+      "messages.thread": "Messages · lecture de la conversation",
+      "auth.signup": "Authentification · nouvelle inscription",
+      "auth.logout": "Authentification · déconnexion",
+      "community.post": "Communauté · lecture d’une publication",
+      "community.reply": "Communauté · réponse à un commentaire",
+      "community.react_comment": "Communauté · réaction à un commentaire",
+      "community.verdict": "Communauté · vote de verdict",
+      "community.report": "Communauté · signalement",
+      "community.search": "Communauté · recherche de membres",
+      "community.explore": "Communauté · exploration",
+      "community.leaderboard": "Communauté · classement",
+      "community.profile": "Communauté · profil d’un membre",
+      "social.follow": "Social · abonnement",
+      "social.unfollow": "Social · désabonnement",
+      "account.notifications": "Compte · notifications",
+      "account.notifications_read": "Compte · notifications lues",
+      "moderation.reports": "Modération · file des signalements",
+      "moderation.resolve": "Modération · signalement traité"
+    };
+    const byId = id => document.getElementById(id);
+    const runForm = byId("run-form");
+    const runButton = byId("run-button");
+    const stopButton = byId("stop-button");
+    const usersSelect = byId("users");
+    const concurrencySelect = byId("concurrency");
+    const durationSelect = byId("duration");
+    const modeSelect = byId("mode");
+    const paceSelect = byId("pace");
+    const rampSelect = byId("ramp");
+    const seedInput = byId("seed");
+    const budgetInput = byId("budget");
+    const keepOpenSelect = byId("keep-open");
+    const signupsSelect = byId("signups");
+    const visitSelect = byId("visit");
+    const actorFilter = byId("actor-filter");
+    const socialKind = byId("social-kind");
+    const sandboxUser = byId("sandbox-user");
+    const detailDialog = byId("detail");
+    const kindLabels = {
+      post: "Publication", comment: "Commentaire", reaction: "Réaction", message: "Message privé",
+      conversation: "Conversation", inbox: "Boîte de réception", analysis: "Analyse", feed: "Fil", profile: "Profil",
+      session: "Session", admin: "Administration", error: "Erreur", activity: "Activité", signup: "Inscription",
+      follow: "Abonnement", reply: "Réponse", verdict: "Vote", report: "Signalement", moderation: "Modération",
+      notification: "Notification", search: "Recherche", explore: "Exploration", view: "Lecture"
+    };
+    const personaLabels = { creator: "Créateur", community: "Communauté", messages: "Messagerie", reader: "Lecteur", complete: "Polyvalent", company: "Équipe Rhetora" };
+    const roleLabels = { operations: "Exploitation", qa: "Qualité", performance: "Performance", security: "Sécurité" };
+    const verdictLabels = { running: "En cours", passed: "Réussi", warning: "À améliorer", failed: "Échec" };
+    const trendLabels = { improved: "Amélioré", regressed: "Régression", new: "Nouveau", stable: "Stable", missing: "Non exécuté" };
+    const checkRank = { failed: 0, warning: 1, passed: 2 };
+    const checkLabels = {
+      company_dashboard: "Tableau de bord entreprise", support_round_trip: "Aller-retour du support",
+      anonymous_messages: "Messages sans session", anonymous_admin: "Administration sans session", user_admin: "Administration par un membre",
+      csrf_header: "CSRF · en-tête absent", csrf_origin: "CSRF · origine étrangère", invalid_message: "Message invalide",
+      invalid_registration: "Inscription invalide", foreign_delete: "Suppression d’une publication d’autrui",
+      foreign_update_unchanged: "Modification d’une publication d’autrui", privilege_escalation: "Élévation de privilèges",
+      private_message_isolation: "Isolation des messages privés", logout_revokes_session: "Révocation de session",
+      security_headers: "En-têtes HTTP de sécurité", content_security_policy: "Content-Security-Policy",
+      protected_files: "Fichiers protégés et traversée de chemin", reflected_xss: "XSS réfléchi", stored_xss: "XSS stocké",
+      idor_trash: "IDOR · corbeille", idor_notifications: "IDOR · notifications", idor_jobs: "IDOR · tâches d’analyse",
+      sql_injection: "Injection SQL", registration_rate_limit: "Limite d’inscriptions", login_rate_limit: "Limite de connexions",
+      database_integrity: "Intégrité SQLite", population_consistency: "Cohérence de la population", user_journeys: "Parcours utilisateurs",
+      full_analysis: "Analyses complètes (arbre argumentatif)", latency_budget: "Budget de latence p95",
+      request_reliability: "Fiabilité des requêtes", login_capacity: "Capacité de connexion"
+    };
+    const actorCache = new Map();
+    let registry = { actors: [], matched: 0, total: 0, query: "", loadedAt: 0 };
+    let active = false;
+    let currentState = null;
+    let refreshing = false;
+    let pointerHeld = false;
+    let sandboxUsersKey = "";
+    let filteredSocial = { kind: "", events: [], total: 0, loadedAt: 0 };
+    let auditFilter = "";
+    let wasActive = false;
+
+    function formatLatency(value) {
+      if (!Number.isFinite(value)) return "—";
+      return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms`;
+    }
+
+    function formatTime(value) {
+      if (!value) return "--:--:--";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "--:--:--" : date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function statusText(value) {
+      return ({ idle: "Prêt à démarrer", running: "Simulation en cours", passed: "Test réussi", failed: "Test à examiner", canceled: "Simulation arrêtée" })[value] || value;
+    }
+
+    function sandboxOpen() {
+      return Boolean(currentState?.sandbox?.open && currentState.sandbox.view_key);
+    }
+
+    function openInSandbox(username, target) {
+      const sandbox = currentState?.sandbox;
+      if (!sandboxOpen() || !username) {
+        byId("message").textContent = "Le site sandbox est fermé : relancez un scénario pour le consulter.";
+        return;
+      }
+      const form = document.createElement("form");
+      form.method = "post";
+      form.action = `${sandbox.url}/api/simulation/view-as`;
+      const view = window.open("about:blank", "rhetora-sandbox");
+      form.target = view ? "rhetora-sandbox" : "_self";
+      for (const [name, value] of Object.entries({ user: username, key: sandbox.view_key, next: target })) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = name;
+        input.value = value;
+        form.append(input);
+      }
+      document.body.append(form);
+      form.submit();
+      form.remove();
+    }
+
+    function actionButton(label, handler, disabled = false) {
+      const element = document.createElement("button");
+      element.type = "button";
+      element.className = "ghost-button";
+      element.textContent = label;
+      element.disabled = disabled;
+      element.addEventListener("click", handler);
+      return element;
+    }
+
+    function emptyItem(text) {
+      const item = document.createElement("li");
+      item.className = "empty";
+      item.textContent = text;
+      return item;
+    }
+
+    function openDetail(title, subtitle, nodes) {
+      byId("detail-title").textContent = title;
+      byId("detail-subtitle").textContent = subtitle;
+      byId("detail-body").replaceChildren(...nodes);
+      if (!detailDialog.open) detailDialog.showModal();
+    }
+
+    function showEvent(event) {
+      const fields = document.createElement("dl");
+      fields.className = "detail-fields";
+      const rows = [
+        ["Compte", `${event.username}${event.persona ? ` · ${personaLabels[event.persona] || event.persona}` : ""}`],
+        ["Type", kindLabels[event.kind] || "Activité"],
+        ["Avec", event.peer || "—"],
+        ["Publication", event.post_id ? `#${event.post_id}${event.title ? ` · ${event.title}` : ""}` : (event.title || "—")],
+        ["Résumé", event.detail || "—"],
+        ["Heure", new Date(event.at).toLocaleString("fr-CA", { hour12: false })]
+      ];
+      for (const [label, value] of rows) {
+        const term = document.createElement("dt");
+        term.textContent = label;
+        const description = document.createElement("dd");
+        description.textContent = value;
+        fields.append(term, description);
+      }
+      const nodes = [fields];
+      if (event.content) {
+        const content = document.createElement("pre");
+        content.className = "detail-content";
+        content.textContent = event.content;
+        nodes.push(content);
+      }
+      const closed = !sandboxOpen();
+      const actions = document.createElement("div");
+      actions.className = "sandbox-actions";
+      if (event.post_id) {
+        actions.append(actionButton("Voir la publication dans Rhetora", () => openInSandbox(event.username, `#/post/${event.post_id}`), closed));
+      }
+      if (event.peer && (event.kind === "message" || event.kind === "conversation")) {
+        actions.append(actionButton(`Conversation vue par ${event.username}`,
+          () => openInSandbox(event.username, `#/messages/${encodeURIComponent(event.peer)}`), closed));
+        actions.append(actionButton(`Vue par ${event.peer}`,
+          () => openInSandbox(event.peer, `#/messages/${encodeURIComponent(event.username)}`), closed));
+      }
+      actions.append(actionButton(`Profil de ${event.username}`,
+        () => openInSandbox(event.username, `#/u/${encodeURIComponent(event.username)}`), closed));
+      actions.append(actionButton("Historique du compte", () => showActor(event.username)));
+      nodes.push(actions);
+      if (closed) {
+        const note = document.createElement("p");
+        note.className = "sandbox-state";
+        note.textContent = "Le site sandbox est fermé : ce détail reste consultable ici et dans le rapport.";
+        nodes.push(note);
+      }
+      openDetail(event.action, `${kindLabels[event.kind] || "Activité"} · événement #${event.id ?? "—"}`, nodes);
+    }
+
+    async function showActor(username) {
+      if (!username) return;
+      const actor = actorCache.get(username) || { username };
+      const closed = !sandboxOpen();
+      const actions = document.createElement("div");
+      actions.className = "sandbox-actions";
+      actions.append(
+        actionButton("Ouvrir son fil", () => openInSandbox(username, "#/communaute"), closed),
+        actionButton("Ouvrir sa messagerie", () => openInSandbox(username, "#/messages"), closed),
+        actionButton("Ouvrir son profil", () => openInSandbox(username, `#/u/${encodeURIComponent(username)}`), closed)
+      );
+      if (actor.persona === "company") actions.append(actionButton("Administration", () => openInSandbox(username, "#/admin"), closed));
+      const list = document.createElement("ol");
+      list.className = "history";
+      list.append(emptyItem("Chargement de l’historique…"));
+      openDetail(username, `${personaLabels[actor.persona] || "Compte"} · ${actor.actions || 0} action(s)`, [actions, list]);
+      try {
+        const response = await fetch(`/api/simulation/activity?actor=${encodeURIComponent(username)}&limit=200`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Historique indisponible (${response.status}).`);
+        list.replaceChildren(...(data.events.length ? data.events.map(socialRow) : [emptyItem("Aucune action journalisée pour ce compte.")]));
+        byId("detail-subtitle").textContent = `${personaLabels[actor.persona] || "Compte"} · ${data.total} événement(s) envoyé(s) ou reçu(s)`;
+      } catch (error) {
+        list.replaceChildren(emptyItem(error.message));
+      }
+    }
+
+    function socialRow(item) {
+      const row = document.createElement("li");
+      const entry = document.createElement("button");
+      entry.type = "button";
+      entry.className = "social-item";
+      entry.addEventListener("click", () => showEvent(item));
+      const avatar = document.createElement("span");
+      avatar.className = "social-avatar";
+      avatar.textContent = item.username.slice(-2).toUpperCase();
+      const main = document.createElement("span");
+      main.className = "social-main";
+      const line = document.createElement("span");
+      line.className = "social-line";
+      line.style.display = "block";
+      const badge = document.createElement("span");
+      badge.className = "social-kind";
+      badge.textContent = kindLabels[item.kind] || "Activité";
+      const name = document.createElement("strong");
+      name.textContent = item.username;
+      const action = document.createElement("span");
+      action.textContent = ` ${item.action.toLocaleLowerCase("fr-CA")}`;
+      if (item.peer) {
+        const peer = document.createElement("span");
+        peer.className = "social-peer";
+        peer.textContent = ` · ${item.peer}`;
+        action.append(peer);
+      }
+      line.append(badge, name, action);
+      main.append(line);
+      const summary = item.content || item.detail;
+      if (summary) {
+        const detail = document.createElement("span");
+        detail.className = "social-detail";
+        detail.style.display = "block";
+        detail.textContent = summary.length > 160 ? `${summary.slice(0, 160)}…` : summary;
+        main.append(detail);
+      }
+      const time = document.createElement("time");
+      time.className = "social-time";
+      time.textContent = formatTime(item.at);
+      entry.append(avatar, main, time);
+      row.append(entry);
+      return row;
+    }
+
+    function renderSandbox(state) {
+      const sandbox = state.sandbox;
+      const open = sandboxOpen();
+      byId("sandbox-panel").classList.toggle("closed", !open);
+      const text = byId("sandbox-state");
+      text.replaceChildren();
+      if (!sandbox) {
+        text.textContent = "Le site sandbox s’ouvrira au lancement du scénario.";
+      } else if (open) {
+        text.append(state.status === "running"
+          ? "Site ouvert en direct : les comptes agissent pendant que vous naviguez. "
+          : "Simulation terminée : le site reste consultable jusqu’à sa fermeture. ");
+        const url = document.createElement("span");
+        url.className = "sandbox-url";
+        url.textContent = `${sandbox.url}/arbitre.html`;
+        text.append(url);
+      } else {
+        text.textContent = "Site sandbox fermé : sa base temporaire a été supprimée. Le journal et le rapport restent consultables.";
+      }
+      const actors = registry.actors;
+      const key = `${sandbox?.url || ""}:${registry.loadedAt}`;
+      if (key !== sandboxUsersKey && document.activeElement !== sandboxUser) {
+        const previous = sandboxUser.value;
+        const ordered = [...actors];
+        if (previous && !ordered.some(actor => actor.username === previous) && actorCache.has(previous)) ordered.unshift(actorCache.get(previous));
+        sandboxUser.replaceChildren(...(ordered.length
+          ? ordered.map(actor => new Option(`${actor.username} · ${personaLabels[actor.persona] || "Compte"} · ${actor.status}`, actor.username))
+          : [new Option("Aucun compte", "")]));
+        if (ordered.some(actor => actor.username === previous)) sandboxUser.value = previous;
+        sandboxUsersKey = key;
+      }
+      sandboxUser.disabled = !actors.length;
+      for (const element of document.querySelectorAll("[data-open]")) {
+        element.disabled = !sandboxUser.value || (element.dataset.open !== "history" && !open);
+      }
+    }
+
+    async function loadActors(force = false) {
+      const query = actorFilter.value.trim();
+      if (!force && registry.query === query && Date.now() - registry.loadedAt < 2000) return;
+      registry.loadedAt = Date.now();
+      try {
+        const response = await fetch(`/api/simulation/actors?q=${encodeURIComponent(query)}&limit=100`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || actorFilter.value.trim() !== query) return;
+        registry = { actors: data.actors, matched: data.matched, total: data.total, query, loadedAt: Date.now() };
+        for (const actor of data.actors) actorCache.set(actor.username, actor);
+        renderActors();
+        renderSandbox(currentState || {});
+      } catch {
+        registry.loadedAt = 0;
+      }
+    }
+
+    function renderActors() {
+      const body = byId("actors");
+      if (pointerHeld || body.contains(document.activeElement)) return;
+      body.replaceChildren();
+      const query = registry.query;
+      const visible = registry.actors;
+      byId("actor-count").textContent = `${visible.length} affiché${visible.length === 1 ? "" : "s"} · ${registry.matched} correspondant${registry.matched === 1 ? "" : "s"} · ${registry.total} au total`;
+      if (!visible.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 3;
+        cell.className = "empty";
+        cell.textContent = query ? "Aucun compte correspondant." : "Les comptes apparaîtront au démarrage.";
+        row.append(cell);
+        body.append(row);
+        return;
+      }
+      for (const actor of visible) {
+        const row = document.createElement("tr");
+        const name = document.createElement("td");
+        name.className = "actor-name";
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "actor-button";
+        open.textContent = actor.username;
+        open.title = "Voir l’historique et ouvrir le site avec ce compte";
+        open.addEventListener("click", () => showActor(actor.username));
+        const persona = document.createElement("span");
+        persona.className = "actor-persona";
+        persona.textContent = personaLabels[actor.persona] || "Préparation";
+        name.append(open, persona);
+        const state = document.createElement("td");
+        state.className = "actor-state";
+        state.textContent = actor.status;
+        state.style.color = { "En ligne": "var(--green)", Erreur: "var(--red)" }[actor.status] || "var(--quiet)";
+        const actions = document.createElement("td");
+        actions.textContent = `${actor.actions} · ${actor.last_action}`;
+        actions.title = actor.detail || actor.last_action;
+        row.append(name, state, actions);
+        body.append(row);
+      }
+    }
+
+    async function loadFilteredSocial(force = false) {
+      const kind = socialKind.value;
+      if (!kind || (!force && filteredSocial.kind === kind && Date.now() - filteredSocial.loadedAt < 2500)) return;
+      filteredSocial.loadedAt = Date.now();
+      try {
+        const response = await fetch(`/api/simulation/activity?kind=${encodeURIComponent(kind)}&limit=60`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && socialKind.value === kind) {
+          filteredSocial = { kind, events: data.events, total: data.total, loadedAt: Date.now() };
+          renderSocialActivity(currentState?.social_activity || []);
+        }
+      } catch {
+        filteredSocial.loadedAt = 0;
+      }
+    }
+
+    function renderSocialActivity(items) {
+      const list = byId("social-feed");
+      if (pointerHeld || list.contains(document.activeElement)) return;
+      const kind = socialKind.value;
+      const recent = kind
+        ? (filteredSocial.kind === kind ? filteredSocial.events : [])
+        : (items || []).slice(-60).reverse();
+      const total = kind ? filteredSocial.total : (currentState?.social_activity_count ?? (items || []).length);
+      byId("social-count").textContent = `${total} interaction${total === 1 ? "" : "s"} · ${recent.length} affichée${recent.length === 1 ? "" : "s"}`;
+      list.replaceChildren(...(recent.length
+        ? recent.map(socialRow)
+        : [emptyItem(kind ? "Aucune action de ce type pour le moment." : "Les publications et échanges apparaîtront ici.")]));
+    }
+
+    function renderEvents(items) {
+      const list = byId("events");
+      list.replaceChildren();
+      const recent = (items || []).slice(-24).reverse();
+      byId("event-count").textContent = `${items?.length || 0} événement${items?.length === 1 ? "" : "s"}`;
+      if (!recent.length) {
+        const empty = document.createElement("li");
+        empty.className = "empty";
+        empty.textContent = "L’activité du prochain scénario apparaîtra ici.";
+        list.append(empty);
+        return;
+      }
+      for (const event of recent) {
+        const row = document.createElement("li");
+        row.className = "event";
+        const time = document.createElement("time");
+        time.className = "event-time";
+        time.textContent = formatTime(event.at);
+        const label = document.createElement("span");
+        label.className = "event-label";
+        label.textContent = labels[event.action] || event.action;
+        const result = document.createElement("span");
+        result.style.display = "inline-flex";
+        result.style.alignItems = "center";
+        result.style.gap = "8px";
+        const dot = document.createElement("span");
+        const successful = event.success ?? (event.status >= 200 && event.status < 300);
+        dot.className = `event-status${successful ? "" : " bad"}`;
+        const latency = document.createElement("span");
+        latency.className = "event-latency";
+        latency.textContent = formatLatency(event.elapsed_ms);
+        result.append(dot, latency);
+        row.append(time, label, result);
+        list.append(row);
+      }
+    }
+
+    function renderRoutes(actions) {
+      const body = byId("routes");
+      body.replaceChildren();
+      const entries = Object.entries(actions || {}).sort((left, right) => left[0].localeCompare(right[0]));
+      if (!entries.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 4;
+        cell.className = "empty";
+        cell.textContent = "Aucune requête mesurée.";
+        row.append(cell);
+        body.append(row);
+        return;
+      }
+      for (const [action, result] of entries) {
+        const row = document.createElement("tr");
+        const name = document.createElement("td");
+        name.className = "route-name";
+        name.textContent = labels[action] || action;
+        const success = document.createElement("td");
+        success.className = "route-ok";
+        success.textContent = `${result.successes}/${result.requests}`;
+        const failures = document.createElement("td");
+        failures.textContent = String(result.failures);
+        failures.style.color = result.failures ? "var(--red)" : "var(--quiet)";
+        const latency = document.createElement("td");
+        latency.className = "route-latency";
+        latency.textContent = formatLatency(result.p95_ms);
+        const baseline = currentState?.baseline;
+        const before = baseline?.comparable ? baseline.p95[action] : undefined;
+        const trend = before ? latencyTrend(before, result.p95_ms) : "";
+        if (trend === "improved" || trend === "regressed") {
+          const arrow = document.createElement("span");
+          arrow.className = `trend-${trend}`;
+          arrow.textContent = trend === "improved" ? " ▼" : " ▲";
+          latency.append(arrow);
+          latency.title = `Avant : ${formatLatency(before)}`;
+        }
+        row.append(name, success, failures, latency);
+        body.append(row);
+      }
+    }
+
+    function renderAudits(checks) {
+      const body = byId("audits");
+      body.replaceChildren();
+      const counts = { passed: 0, warning: 0, failed: 0 };
+      for (const check of checks) counts[check.status] = (counts[check.status] || 0) + 1;
+      byId("audit-count").textContent = `${counts.passed}/${checks.length} réussis · ${counts.warning} à améliorer · ${counts.failed} en échec`;
+      const order = { failed: 0, warning: 1 };
+      const visible = checks
+        .filter(check => !auditFilter || (auditFilter === "issues" ? check.status !== "passed" : check.role === auditFilter))
+        .map((check, index) => ({ check, index }))
+        .sort((left, right) => (order[left.check.status] ?? 2) - (order[right.check.status] ?? 2) || left.index - right.index);
+      if (!visible.length) {
+        const cell = body.insertRow().insertCell();
+        cell.colSpan = 4;
+        cell.className = "empty";
+        cell.textContent = checks.length ? "Aucun contrôle pour ce filtre." : "En attente des contrôles.";
+      }
+      const baseline = currentState?.baseline;
+      for (const { check } of visible) {
+        const row = body.insertRow();
+        row.className = `row-${check.status}`;
+        const trend = baseline ? checkTrend(baseline.checks[`${check.role}.${check.name}`], check.status) : "";
+        const name = row.insertCell();
+        name.textContent = checkLabels[check.name] || check.name;
+        name.title = check.name;
+        const role = document.createElement("span");
+        role.className = "check-role";
+        role.textContent = roleLabels[check.role] || check.role;
+        name.append(role);
+        const badge = document.createElement("span");
+        badge.className = `state state-${check.status}`;
+        badge.textContent = verdictLabels[check.status] || check.status;
+        row.insertCell().append(badge);
+        const evolution = row.insertCell();
+        evolution.textContent = trend ? trendLabels[trend] : "—";
+        if (trend) evolution.className = `trend-${trend}`;
+        row.insertCell().textContent = check.detail;
+      }
+    }
+
+    function renderRoleCards(checks) {
+      byId("role-cards").replaceChildren(...Object.entries(roleLabels).map(([role, label]) => {
+        const own = checks.filter(check => check.role === role);
+        const counts = { passed: 0, warning: 0, failed: 0 };
+        for (const check of own) counts[check.status] = (counts[check.status] || 0) + 1;
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "role-card";
+        card.title = `Voir les contrôles « ${label} »`;
+        card.addEventListener("click", () => { setAuditFilter(role); selectTab("agents"); });
+        const head = document.createElement("span");
+        head.className = "role-card-head";
+        const title = document.createElement("span");
+        title.textContent = label;
+        const score = document.createElement("strong");
+        score.className = counts.failed ? "trend-regressed" : counts.warning ? "audit-warn" : own.length ? "trend-improved" : "trend-stable";
+        score.textContent = own.length ? `${counts.passed}/${own.length}` : "—";
+        head.append(title, score);
+        const bar = document.createElement("span");
+        bar.className = "role-bar";
+        for (const [status, color] of [["passed", "var(--green)"], ["warning", "var(--yellow)"], ["failed", "var(--red)"]]) {
+          if (!counts[status]) continue;
+          const part = document.createElement("span");
+          part.style.width = `${counts[status] / own.length * 100}%`;
+          part.style.background = color;
+          bar.append(part);
+        }
+        const meta = document.createElement("span");
+        meta.className = "role-meta";
+        meta.textContent = own.length
+          ? [counts.warning && `${counts.warning} à améliorer`, counts.failed && `${counts.failed} en échec`].filter(Boolean).join(" · ") || "Tout est réussi"
+          : "En attente";
+        card.append(head, bar, meta);
+        return card;
+      }));
+      const warnings = checks.filter(check => check.status === "warning").length;
+      const failures = checks.filter(check => check.status === "failed").length;
+      const badge = byId("tab-agents-badge");
+      badge.hidden = !(warnings + failures);
+      badge.textContent = String(warnings + failures);
+      badge.classList.toggle("bad", failures > 0);
+      const metric = byId("metric-checks");
+      metric.textContent = checks.length ? `${checks.length - warnings - failures}/${checks.length}` : "—";
+      metric.className = `metric-value ${failures ? "trend-regressed" : warnings ? "audit-warn" : checks.length ? "trend-improved" : ""}`;
+      byId("metric-checks-detail").textContent = checks.length ? `${warnings} à améliorer · ${failures} en échec` : "En attente";
+    }
+
+    function checkTrend(before, after) {
+      if (!before) return "new";
+      if (!after) return "missing";
+      const difference = (checkRank[after] ?? 0) - (checkRank[before] ?? 0);
+      return difference > 0 ? "improved" : difference < 0 ? "regressed" : "stable";
+    }
+
+    function latencyTrend(before, after) {
+      if (!before) return "new";
+      const margin = Math.max(50, before * 0.2);
+      return after - before > margin ? "regressed" : before - after > margin ? "improved" : "stable";
+    }
+
+    function renderAgents(state) {
+      const list = byId("agent-feed");
+      const latest = new Map();
+      for (const item of state.agent_activity || []) latest.set(`${item.role}.${item.name}`, item);
+      const items = [...latest.values()].sort((left, right) => right.id - left.id).slice(0, 60);
+      const running = items.filter(item => item.state === "running").length;
+      byId("agent-count").textContent = `${latest.size} contrôle${latest.size === 1 ? "" : "s"}${running ? ` · ${running} en cours` : ""}`;
+      if (!items.length) {
+        list.replaceChildren(emptyItem("Les agents d’exploitation, de qualité, de performance et de sécurité apparaîtront ici."));
+        return;
+      }
+      list.replaceChildren(...items.map(item => {
+        const row = document.createElement("li");
+        row.className = `agent-item agent-${item.state}`;
+        const time = document.createElement("time");
+        time.className = "social-time";
+        time.textContent = formatTime(item.at);
+        const state = document.createElement("span");
+        state.className = `state state-${item.state}`;
+        state.textContent = verdictLabels[item.state] || item.state;
+        const main = document.createElement("span");
+        main.className = "agent-main";
+        const name = document.createElement("span");
+        name.className = "agent-name";
+        const role = document.createElement("span");
+        role.className = "agent-role";
+        role.textContent = `${roleLabels[item.role] || item.role} · `;
+        name.append(role, checkLabels[item.name] || item.name);
+        const detail = document.createElement("span");
+        detail.className = "agent-detail";
+        detail.textContent = item.detail;
+        main.append(name, detail);
+        row.append(time, state, main);
+        return row;
+      }));
+    }
+
+    function renderComparison(state) {
+      const body = byId("compare-body");
+      const baseline = state.baseline;
+      if (!baseline) {
+        byId("compare-baseline").textContent = "Aucune référence";
+        byId("metric-trend").textContent = "—";
+        byId("metric-trend").className = "metric-value";
+        byId("metric-trend-detail").textContent = "Première exécution de référence";
+        body.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "Première exécution : elle servira de référence à la suivante." }));
+        return;
+      }
+      byId("compare-baseline").textContent = `vs ${baseline.report.replace(/^run-|\.json$/g, "")}`;
+      byId("compare-baseline").title = `${baseline.report} · ${formatTime(baseline.finished_at)}`;
+      const checks = state.checks || [];
+      const counts = { improved: 0, regressed: 0, new: 0, stable: 0 };
+      const changes = [];
+      for (const check of checks) {
+        const before = baseline.checks[`${check.role}.${check.name}`];
+        const trend = checkTrend(before, check.status);
+        counts[trend] = (counts[trend] || 0) + 1;
+        if (trend !== "stable") changes.push([checkLabels[check.name] || check.name, trend, `${verdictLabels[before] || "absent"} → ${verdictLabels[check.status]}`]);
+      }
+      if (baseline.comparable) {
+        for (const [action, result] of Object.entries(state.actions || {})) {
+          if (action.startsWith("security.")) continue;
+          const before = baseline.p95[action];
+          const trend = latencyTrend(before, result.p95_ms);
+          if (trend === "improved" || trend === "regressed") changes.push([`p95 · ${labels[action] || action}`, trend, `${formatLatency(before)} → ${formatLatency(result.p95_ms)}`]);
+        }
+      }
+      const grid = document.createElement("div");
+      grid.className = "compare-counts";
+      for (const [key, label] of [["improved", "Améliorations"], ["regressed", "Régressions"], ["new", "Nouveaux contrôles"], ["stable", "Stables"]]) {
+        const cell = document.createElement("div");
+        cell.className = "compare-count";
+        const value = document.createElement("strong");
+        value.className = `trend-${key}`;
+        value.textContent = String(counts[key] || 0);
+        const caption = document.createElement("span");
+        caption.textContent = label;
+        cell.append(value, caption);
+        grid.append(cell);
+      }
+      const note = document.createElement("p");
+      note.className = "sandbox-state";
+      note.textContent = baseline.comparable
+        ? "Référence de même configuration : contrôles et latences p95 comparés (seuil : 20 % et 50 ms)."
+        : "Configuration différente de la référence : seuls les verdicts sont comparés, pas les latences.";
+      const list = document.createElement("ul");
+      list.className = "compare-list";
+      const order = { regressed: 0, improved: 1, new: 2 };
+      changes.sort((left, right) => (order[left[1]] ?? 3) - (order[right[1]] ?? 3));
+      for (const [name, trend, detail] of changes.slice(0, 14)) {
+        const item = document.createElement("li");
+        const label = document.createElement("b");
+        label.textContent = name;
+        const value = document.createElement("span");
+        value.className = `trend-${trend}`;
+        value.textContent = `${trendLabels[trend]} · ${detail}`;
+        item.append(label, value);
+        list.append(item);
+      }
+      if (!changes.length) list.append(Object.assign(document.createElement("li"), { textContent: "Aucun changement depuis la référence." }));
+      body.replaceChildren(grid, note, list);
+      const improved = changes.filter(change => change[1] === "improved").length;
+      const regressed = changes.filter(change => change[1] === "regressed").length;
+      const metric = byId("metric-trend");
+      metric.textContent = regressed ? `▲ ${regressed}` : improved ? `▼ ${improved}` : "=";
+      metric.className = `metric-value ${regressed ? "trend-regressed" : improved ? "trend-improved" : "trend-stable"}`;
+      byId("metric-trend-detail").textContent = `${improved} amélioration${improved === 1 ? "" : "s"} · ${regressed} régression${regressed === 1 ? "" : "s"}`;
+    }
+
+    function render(state) {
+      const status = state.status || "idle";
+      const synchronizeForm = !currentState || (currentState.status === "running" && status !== "running");
+      currentState = state;
+      active = status === "running";
+      for (const field of runForm.querySelectorAll("select, input")) field.disabled = active;
+      runButton.disabled = active;
+      runButton.textContent = active ? "Scénario en cours…" : status === "passed" || status === "failed" ? "Relancer le scénario" : "Lancer le scénario";
+      stopButton.disabled = !active || !!state.cancel_requested;
+      stopButton.textContent = state.cancel_requested ? "Arrêt demandé…" : "Arrêter";
+      const closable = !active && sandboxOpen();
+      if (closable) {
+        stopButton.disabled = false;
+        stopButton.textContent = "Fermer le site";
+      }
+      const badge = byId("status");
+      badge.className = `status ${status}`;
+      badge.lastElementChild.textContent = statusText(status);
+      byId("phase").textContent = state.phase || statusText(status);
+      const requestCount = state.request_count || 0;
+      byId("metric-requests").textContent = requestCount.toLocaleString("fr-CA");
+      byId("metric-throughput").textContent = `${state.throughput_rps || 0} requête/s en moyenne`;
+      const config = state.configuration || {};
+      const population = state.population || {};
+      byId("metric-users").textContent = population.total ? `${population.online.toLocaleString("fr-CA")}/${population.total.toLocaleString("fr-CA")}` : "0";
+      byId("metric-users-detail").textContent = `En ligne / total · ${(population.signups || 0).toLocaleString("fr-CA")} inscription(s)`;
+      const errorCount = state.error_count ?? (state.errors || []).length;
+      byId("metric-errors").textContent = String(errorCount);
+      const actions = state.actions || {};
+      const maxP95 = Math.max(0, ...Object.values(actions).map(item => item.p95_ms || 0));
+      byId("metric-p95").textContent = formatLatency(maxP95);
+      const expected = Math.max(1, (config.users || Number(usersSelect.value)) * 12 + 1);
+      if (active && config.duration_seconds && state.activity_elapsed_seconds !== undefined) {
+        const duration = Number(config.duration_seconds);
+        const elapsed = Number(state.activity_elapsed_seconds);
+        byId("progress-label").textContent = `${requestCount.toLocaleString("fr-CA")} requêtes · ${Math.floor(elapsed)} s / ${duration} s`;
+        byId("progress-bar").style.width = `${Math.min(100, elapsed / duration * 100)}%`;
+      } else {
+        byId("progress-label").textContent = `${requestCount.toLocaleString("fr-CA")} requête${requestCount === 1 ? "" : "s"}`;
+        byId("progress-bar").style.width = `${Math.min(100, requestCount / expected * 100)}%`;
+      }
+      renderEvents(state.recent_events || []);
+      renderRoutes(actions);
+      loadActors();
+      renderSandbox(state);
+      renderSocialActivity(state.social_activity || []);
+      loadFilteredSocial();
+      renderAudits(state.checks || []);
+      renderRoleCards(state.checks || []);
+      renderAgents(state);
+      renderComparison(state);
+      const communityTotal = state.social_activity_count || 0;
+      byId("tab-community-badge").hidden = !communityTotal;
+      byId("tab-community-badge").textContent = communityTotal.toLocaleString("fr-CA");
+      byId("tab-site-dot").hidden = !sandboxOpen();
+      if (status === "passed" || status === "failed") byId("progress-bar").style.width = "100%";
+      byId("report-link").hidden = !state.report_path;
+      byId("message").textContent = errorCount ? state.errors?.at(-1)?.message || "Un contrôle a échoué." : "";
+      if (!active && synchronizeForm) {
+        if (config.users) usersSelect.value = String(config.users);
+        if (config.concurrency) concurrencySelect.value = String(config.concurrency);
+        if (config.duration_seconds) durationSelect.value = String(config.duration_seconds);
+        if (config.mode) modeSelect.value = config.mode;
+        if (config.pace) paceSelect.value = config.pace;
+        if (config.ramp_seconds !== undefined) rampSelect.value = String(config.ramp_seconds);
+        if (config.seed !== undefined) seedInput.value = String(config.seed);
+        if (config.p95_budget_ms) budgetInput.value = String(config.p95_budget_ms);
+        if (config.keep_open_seconds !== undefined) keepOpenSelect.value = String(config.keep_open_seconds);
+        if (config.signups_per_minute !== undefined) signupsSelect.value = String(config.signups_per_minute);
+        if (config.visit_percent !== undefined) visitSelect.value = String(config.visit_percent);
+      }
+      if (active && !wasActive) setSettingsOpen(false);
+      wasActive = active;
+      renderConfigSummary();
+    }
+
+    function renderConfigSummary() {
+      const option = select => select.options[select.selectedIndex]?.text || select.value;
+      byId("config-summary").textContent = [
+        option(usersSelect), option(durationSelect), option(concurrencySelect), option(modeSelect),
+        option(paceSelect).split(" · ")[0], `graine ${seedInput.value}`
+      ].join(" · ");
+    }
+
+    function setSettingsOpen(open) {
+      runForm.hidden = !open;
+      byId("settings-toggle").setAttribute("aria-expanded", String(open));
+      byId("settings-toggle").classList.toggle("active", open);
+    }
+
+    function selectTab(name, focus = false) {
+      for (const tab of document.querySelectorAll("[data-tab]")) {
+        const selected = tab.dataset.tab === name;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        byId(tab.getAttribute("aria-controls")).hidden = !selected;
+        if (selected && focus) tab.focus();
+      }
+      localStorage.setItem("rhetora-simulation-tab", name);
+    }
+
+    function setAuditFilter(value) {
+      auditFilter = value;
+      for (const button of document.querySelectorAll("[data-filter]")) button.classList.toggle("active", button.dataset.filter === value);
+      renderAudits(currentState?.checks || []);
+    }
+
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const response = await fetch("/api/simulation/state", { cache: "no-store", credentials: "same-origin" });
+        if (!response.ok) throw new Error(`Console indisponible (${response.status}).`);
+        render(await response.json());
+      } catch (error) {
+        byId("message").textContent = error.message;
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    runForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      byId("message").textContent = "";
+      runButton.disabled = true;
+      try {
+        const users = Number(usersSelect.value);
+        const concurrency = Math.min(Number(concurrencySelect.value), users, 100);
+        concurrencySelect.value = String(concurrency);
+        const response = await fetch("/api/simulation/run", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", "X-Rhetora": "1" },
+          body: JSON.stringify({
+            users,
+            concurrency,
+            duration_seconds: Number(durationSelect.value),
+            mode: modeSelect.value,
+            pace: paceSelect.value,
+            ramp_seconds: Number(rampSelect.value),
+            seed: Number(seedInput.value),
+            p95_budget_ms: Number(budgetInput.value),
+            keep_open_seconds: Number(keepOpenSelect.value),
+            signups_per_minute: Number(signupsSelect.value),
+            visit_percent: Number(visitSelect.value)
+          })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `Lancement impossible (${response.status}).`);
+        await refresh();
+      } catch (error) {
+        byId("message").textContent = error.message;
+        runButton.disabled = false;
+      }
+    });
+
+    stopButton.addEventListener("click", async () => {
+      stopButton.disabled = true;
+      byId("message").textContent = active ? "Arrêt demandé; l’action en cours se termine." : "Fermeture du site sandbox…";
+      try {
+        const response = await fetch("/api/simulation/stop", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "X-Rhetora": "1" }
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `Arrêt impossible (${response.status}).`);
+        await refresh();
+      } catch (error) {
+        byId("message").textContent = error.message;
+      }
+    });
+
+    let actorFilterTimer = 0;
+    actorFilter.addEventListener("input", () => {
+      clearTimeout(actorFilterTimer);
+      actorFilterTimer = setTimeout(() => loadActors(true), 250);
+    });
+    socialKind.addEventListener("change", () => {
+      filteredSocial = { kind: "", events: [], total: 0, loadedAt: 0 };
+      renderSocialActivity(currentState?.social_activity || []);
+      loadFilteredSocial(true);
+    });
+    sandboxUser.addEventListener("change", () => renderSandbox(currentState || {}));
+    for (const element of document.querySelectorAll("[data-open]")) {
+      element.addEventListener("click", () => {
+        const username = sandboxUser.value;
+        if (element.dataset.open === "history") {
+          showActor(username);
+          return;
+        }
+        openInSandbox(username, {
+          feed: "#/communaute",
+          messages: "#/messages",
+          profile: `#/u/${encodeURIComponent(username)}`
+        }[element.dataset.open]);
+      });
+    }
+    byId("detail-close").addEventListener("click", () => detailDialog.close());
+    detailDialog.addEventListener("click", event => { if (event.target === detailDialog) detailDialog.close(); });
+    document.addEventListener("pointerdown", () => { pointerHeld = true; });
+    for (const type of ["pointerup", "pointercancel"]) document.addEventListener(type, () => { pointerHeld = false; });
+    byId("settings-toggle").addEventListener("click", () => setSettingsOpen(runForm.hidden));
+    runForm.addEventListener("change", renderConfigSummary);
+    const tabs = [...document.querySelectorAll("[data-tab]")];
+    for (const tab of tabs) {
+      tab.addEventListener("click", () => selectTab(tab.dataset.tab));
+      tab.addEventListener("keydown", event => {
+        const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+        if (!step) return;
+        event.preventDefault();
+        selectTab(tabs[(tabs.indexOf(tab) + step + tabs.length) % tabs.length].dataset.tab, true);
+      });
+    }
+    for (const element of document.querySelectorAll("[data-goto]")) element.addEventListener("click", () => selectTab(element.dataset.goto));
+    for (const button of document.querySelectorAll("[data-filter]")) button.addEventListener("click", () => setAuditFilter(button.dataset.filter));
+    const savedTab = localStorage.getItem("rhetora-simulation-tab");
+    if (tabs.some(tab => tab.dataset.tab === savedTab)) selectTab(savedTab);
+    renderConfigSummary();
+
+    refresh();
+    window.setInterval(refresh, 800);
+  </script>
+</body>
+</html>

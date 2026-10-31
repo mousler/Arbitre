@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Rhetora</title>
+  <style>
+    :root { color-scheme: dark; --accent: #9f8cff; --line: rgba(255,255,255,.1); --muted: #9b9faa; }
+    * { box-sizing: border-box; }
+    body { width: 320px; margin: 0; padding: 14px; color: #f5f6f7; background: #121419; font: 13px/1.45 "Segoe UI", sans-serif; }
+    header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(145deg, #806dff, #d55d9e); font-weight: 800; }
+    h1 { margin: 0; font-size: 15px; }
+    .sub { margin: 0; color: var(--muted); font-size: 11px; }
+    section { padding: 12px 0; border-top: 1px solid var(--line); }
+    .video { margin: 0 0 10px; color: var(--muted); overflow-wrap: anywhere; }
+    .video b { color: #f5f6f7; }
+    button, input { font: inherit; }
+    button { width: 100%; height: 36px; border: 0; border-radius: 6px; color: #111015; background: var(--accent); font-weight: 750; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.ghost { color: #f5f6f7; background: #22252d; font-weight: 650; }
+    form { display: flex; gap: 6px; }
+    form button { width: auto; padding: 0 12px; }
+    input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; color: #f5f6f7; background: #1b1e25; }
+    label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .note { min-height: 16px; margin: 6px 0 0; color: var(--muted); font-size: 11px; }
+    details summary { color: var(--muted); font-size: 11px; cursor: pointer; }
+    details form { margin-top: 8px; }
+    kbd { padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="mark" aria-hidden="true">r</span>
+    <div><h1>Rhetora</h1><p class="sub">L’arbitre de vos débats</p></div>
+  </header>
+
+  <section>
+    <p class="video" id="video">Recherche d’une vidéo dans cet onglet…</p>
+    <button id="analyze" type="button" disabled>Analyser ce débat</button>
+    <p class="note">Rhetora s’ouvre et vous demande de confirmer avant de lancer l’analyse. Raccourci : <kbd>Alt</kbd>+<kbd>Maj</kbd>+<kbd>R</kbd></p>
+  </section>
+
+  <section>
+    <label for="query">Chercher des débats (ou tapez <kbd>rh</kbd> + espace dans la barre d’adresse)</label>
+    <form id="search">
+      <input id="query" type="search" maxlength="150" placeholder="Nucléaire, retraites, IA…" required>
+      <button type="submit">Chercher</button>
+    </form>
+  </section>
+
+  <section>
+    <button class="ghost" id="open" type="button">Ouvrir Rhetora</button>
+    <details>
+      <summary>Adresse du serveur Rhetora</summary>
+      <form id="settings">
+        <input id="server" type="url" placeholder="http://localhost:8766" required>
+        <button type="submit">Enregistrer</button>
+      </form>
+      <p class="note" id="settings-note"></p>
+    </details>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

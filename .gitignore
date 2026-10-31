@@ -5,6 +5,7 @@ __pycache__/
 .vscode/
 .tmp/
 .shots/
+simulation-results/
 _seed_test.html
 _shot.html
 *.wav

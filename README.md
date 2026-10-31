@@ -67,6 +67,22 @@ python arbitre_server.py
 4. Optionnel : Ajouter le sujet du débat
 5. Cliquer "Analyser" et attendre
 
+### Extension de navigateur (Edge / Chrome)
+
+Le dossier `extension/` envoie une vidéo YouTube à Rhetora sans copier-coller.
+
+1. Ouvrir `edge://extensions` (ou `chrome://extensions`) et activer le **mode développeur**.
+2. Cliquer **Charger l'extension décompressée** et choisir le dossier `extension/`.
+3. Épingler l'icône Rhetora dans la barre d'outils.
+
+Utilisation :
+- **Sur une vidéo YouTube** : icône Rhetora → *Analyser ce débat*, clic droit → *Analyser ce débat avec Rhetora*, ou `Alt+Maj+R`.
+- **Sur un lien YouTube** : clic droit → *Analyser cette vidéo avec Rhetora*.
+- **Barre d'adresse** : `rh` + espace, puis un sujet (recherche dans Explorer) ou un lien YouTube (analyse).
+- **Texte sélectionné** : clic droit → *Chercher « … » dans les débats Rhetora*.
+
+Rhetora s'ouvre (ou réutilise l'onglet déjà ouvert) et demande une confirmation avant de lancer l'analyse : un lien externe ne peut pas consommer votre quota à votre insu. L'adresse du serveur (par défaut `http://localhost:8766`) se règle dans la fenêtre de l'extension.
+
 ---
 
 ## 📊 Cas d'usage

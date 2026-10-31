@@ -3,10 +3,13 @@
 (arguments, sophismes, erreurs logiques, faits à vérifier) → fusion par orateur et synthèse finale."""
 
 import json
+import hmac
+import ipaddress
 import os
 import posixpath
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -15,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -23,7 +27,18 @@ import community  # comptes, communauté, défis, administration (SQLite dans da
 
 STATIC_RE = re.compile(r"^/[\w-]+\.html$")  # seules les pages HTML racine sont servies (jamais data/, .py, .venv…)
 
-PORT = 8766
+PORT = int(os.environ.get("ARBITRE_PORT", "8766"))
+SIMULATION_MODE = os.environ.get("RHETORA_SIMULATION_MODE") == "1"
+SIMULATION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation-results")
+SIMULATION_STATUS_FILE = os.path.join(SIMULATION_DIR, "live.json")
+SIMULATION_LOG_FILE = os.path.join(SIMULATION_DIR, "controller.log")
+SIMULATION_CANCEL_FILE = os.path.join(SIMULATION_DIR, "cancel.requested")
+SIMULATION_ACTIVITY_FILE = os.path.join(SIMULATION_DIR, "live-activity.jsonl")
+SIMULATION_ACTORS_FILE = os.path.join(SIMULATION_DIR, "live-actors.json")
+SIMULATION_VIEW_KEY = os.environ.get("RHETORA_SIMULATION_VIEW_KEY", "") if SIMULATION_MODE else ""
+SIMULATION_VIEW_TARGET_RE = re.compile(r"#/(?:post/\d{1,12}|u/[^\s#]{1,120}|messages(?:/[^\s#]{1,120})?|communaute|admin)")
+simulation_lock = threading.Lock()
+simulation_process = None
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_CHAT_MODELS = [  # essayés dans l'ordre (repli sur quota épuisé / modèle indisponible)
     "llama-3.3-70b-versatile",
@@ -233,6 +248,51 @@ def gemini_chat(api_key, system, user):
 
 def llm_json(engine, keys, system, user, max_tokens=4096):
     """Appelle le moteur d'analyse et retourne l'objet JSON produit (2 essais si la réponse est invalide)"""
+    if SIMULATION_MODE:
+        if system == CHUNK_PROMPT:
+            return {
+                "orateurs": [{
+                    "nom": "Orateur A",
+                    "these_principale": "Les essais isolés aident à repérer les régressions.",
+                    "arguments": [{
+                        "extrait": "Les essais isolés protègent les données réelles.",
+                        "these": "Un environnement isolé réduit les risques des essais.",
+                        "premisses": ["Les données réelles ne sont pas modifiées."],
+                        "type": "exemple",
+                        "solidite": "forte",
+                        "justification": "Réponse déterministe réservée aux tests locaux.",
+                    }],
+                    "sophismes": [],
+                    "incoherences": [],
+                    "faits_a_verifier": [],
+                }],
+                "resume": "Analyse déterministe produite en mode simulation locale.",
+            }
+        if system == SYNTHESIS_PROMPT:
+            return {
+                "synthese": "Synthèse déterministe utilisée pour valider le parcours d'analyse.",
+                "orateurs": [{
+                    "nom": "Orateur A",
+                    "these_principale": "Les essais isolés aident à repérer les régressions.",
+                }],
+            }
+        if system == MAP_PROMPT:
+            return {
+                "question": "Le parcours d'analyse produit-il une carte argumentative ?",
+                "these": {"texte": "Le parcours doit produire une carte exploitable.", "force": "moyenne"},
+                "pour": {"intitule": "Parcours valide", "orateurs": ["Orateur A"]},
+                "contre": {"intitule": "Parcours invalide", "orateurs": []},
+                "arguments": [{
+                    "id": "A1", "camp": "pour", "titre": "La carte est normalisee.",
+                    "orateur": "Orateur A", "type": "exemple", "force": "moyenne",
+                    "premisses": ["Le fournisseur simule le prompt de carte."],
+                    "evidences": [], "garant": "Chaque prompt doit avoir une reponse compatible.",
+                    "conclusion": "La carte peut etre normalisee.", "supports": ["T"],
+                }],
+                "conclusion": {"texte": "Le prompt de carte est pris en charge.", "force": "moyenne", "avantage": "pour"},
+            }
+        raise RuntimeError("Prompt non pris en charge par le moteur IA simulé.")
+
     problem = None
     for _ in range(2):
         raw = (groq_chat(keys["groq"], system, user, max_tokens, keys.get("groq_models"), keys.get("temperature", 0.2))
@@ -560,7 +620,7 @@ def read_settings(payload, with_transcription, ctx, label):
     """Vérifie l'accès (compte, droits, quota) et récupère la configuration IA définie par l'administrateur"""
     headers, ip = ctx
     cfg = community.llm_access(headers, ip, "analyze", label, with_transcription)
-    if cfg["analysis_engine"] == "groq" or (with_transcription and cfg["transcribe_engine"].startswith("groq")):
+    if not SIMULATION_MODE and (cfg["analysis_engine"] == "groq" or (with_transcription and cfg["transcribe_engine"].startswith("groq"))):
         try:
             check_groq_key(cfg["keys"]["groq"])
         except ValueError:
@@ -945,6 +1005,30 @@ class Handler(SimpleHTTPRequestHandler):
         if self.community_api("GET"):
             return
         parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == "/api/simulation/state":
+            if not self.simulation_is_local():
+                self.send_json(403, {"error": "Console réservée à cette machine."})
+                return
+            self.send_json(200, self.simulation_state())
+            return
+        if parsed.path == "/api/simulation/report":
+            if not self.simulation_is_local():
+                self.send_json(403, {"error": "Console réservée à cette machine."})
+                return
+            self.send_simulation_report()
+            return
+        if parsed.path == "/api/simulation/activity":
+            if not self.simulation_is_local():
+                self.send_json(403, {"error": "Console réservée à cette machine."})
+                return
+            self.send_simulation_activity(parsed.query)
+            return
+        if parsed.path == "/api/simulation/actors":
+            if not self.simulation_is_local():
+                self.send_json(403, {"error": "Console réservée à cette machine."})
+                return
+            self.send_simulation_actors(parsed.query)
+            return
         api = {"/api/explore": explore_youtube, "/api/oembed": youtube_oembed}.get(parsed.path)
         if api:
             try:
@@ -968,6 +1052,16 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json(404, {"error": "Tâche inconnue ou expirée (serveur redémarré ?)."})
 
     def do_POST(self):
+        simulation_path = urllib.parse.urlsplit(self.path).path
+        if simulation_path == "/api/simulation/run":
+            self.start_simulation()
+            return
+        if simulation_path == "/api/simulation/stop":
+            self.stop_simulation()
+            return
+        if simulation_path == "/api/simulation/view-as":
+            self.simulation_view_as()
+            return
         if self.community_api("POST"):
             return
         ctx = (self.headers, self.client_address[0])
@@ -1012,6 +1106,276 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": str(e)})
             return
         self.send_json(202, {"jobId": start_job(work)})
+
+    def simulation_is_local(self):
+        try:
+            return ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            return False
+
+    def simulation_state(self):
+        try:
+            with open(SIMULATION_STATUS_FILE, encoding="utf-8") as state_file:
+                state = json.load(state_file)
+        except (OSError, ValueError):
+            state = {"status": "idle", "phase": "Prêt à démarrer", "request_count": 0,
+                     "actions": {}, "recent_events": [], "errors": []}
+        with simulation_lock:
+            process = simulation_process
+            if (state.get("sandbox") or {}).get("open") and (process is None or process.poll() is not None):
+                state["sandbox"]["open"] = False
+            cancel_requested = state.get("status") == "running" and os.path.isfile(SIMULATION_CANCEL_FILE)
+            if cancel_requested:
+                state["cancel_requested"] = True
+                state["phase"] = "Arrêt demandé · fin de l’action en cours"
+            interrupted = state.get("status") == "running" and (process is None or process.poll() is not None)
+            if interrupted:
+                state["status"] = "failed"
+                state["phase"] = "La simulation a été interrompue avant son rapport final"
+                try:
+                    with open(SIMULATION_LOG_FILE, encoding="utf-8", errors="replace") as log_file:
+                        detail = log_file.read()[-1200:].strip()
+                except OSError:
+                    detail = ""
+                return_code = process.returncode if process else "serveur redémarré"
+                state["errors"] = state.get("errors", []) + [{
+                    "action": "simulation",
+                    "status": return_code,
+                    "message": detail or "Aucun processus de simulation actif n'est associé à cet état.",
+                }]
+                temporary = SIMULATION_STATUS_FILE + ".tmp"
+                with open(temporary, "w", encoding="utf-8") as state_file:
+                    json.dump(state, state_file)
+                os.replace(temporary, SIMULATION_STATUS_FILE)
+        return state
+
+    def send_simulation_report(self):
+        state = self.simulation_state()
+        report_path = os.path.abspath(state.get("report_path") or "")
+        try:
+            inside_results = os.path.commonpath((SIMULATION_DIR, report_path)) == SIMULATION_DIR
+        except ValueError:
+            inside_results = False
+        if not inside_results or not os.path.isfile(report_path):
+            self.send_json(404, {"error": "Aucun rapport terminé pour le moment."})
+            return
+        try:
+            with open(report_path, encoding="utf-8") as report_file:
+                report = json.load(report_file)
+        except (OSError, ValueError):
+            self.send_json(500, {"error": "Le rapport est illisible."})
+            return
+        self.send_json(200, report)
+
+    def send_simulation_activity(self, query):
+        params = urllib.parse.parse_qs(query)
+        actor = params.get("actor", [""])[0][:120]
+        kind = params.get("kind", [""])[0][:30]
+        try:
+            limit = min(300, max(1, int(params.get("limit", ["150"])[0])))
+        except ValueError:
+            limit = 150
+        events, total = deque(maxlen=limit), 0
+        try:
+            with open(SIMULATION_ACTIVITY_FILE, encoding="utf-8") as journal:
+                for line in journal:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if actor and actor not in (event.get("username"), event.get("peer")):
+                        continue
+                    if kind and event.get("kind") != kind:
+                        continue
+                    total += 1
+                    events.append(event)
+        except FileNotFoundError:
+            pass
+        self.send_json(200, {"events": list(events)[::-1], "total": total})
+
+    def send_simulation_actors(self, query):
+        params = urllib.parse.parse_qs(query)
+        needle = params.get("q", [""])[0][:80].casefold()
+        try:
+            limit = min(200, max(1, int(params.get("limit", ["100"])[0])))
+        except ValueError:
+            limit = 100
+        try:
+            with open(SIMULATION_ACTORS_FILE, encoding="utf-8") as actors_file:
+                actors = json.load(actors_file)
+        except (OSError, ValueError):
+            actors = []
+        matched = [actor for actor in actors if not needle or needle in " ".join(
+            str(actor.get(key, "")) for key in ("username", "persona", "status", "joined", "last_action")).casefold()]
+        matched.sort(key=lambda actor: (actor.get("persona") != "company", actor.get("status") != "En ligne", -actor.get("actions", 0)))
+        self.send_json(200, {"actors": matched[:limit], "matched": len(matched), "total": len(actors)})
+
+    def simulation_view_as(self):
+        """Sandbox uniquement : ouvre une session navigateur pour un compte simulé, avec la clé propre à l'exécution."""
+        if not (SIMULATION_VIEW_KEY and self.simulation_is_local()):
+            self.send_json(403, {"error": "Consultation réservée à la sandbox locale."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 < length <= 2048:
+            self.send_json(400, {"error": "Requête invalide."})
+            return
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+        key, username = form.get("key", [""])[0], form.get("user", [""])[0][:40]
+        target = form.get("next", [""])[0]
+        if not hmac.compare_digest(key.encode(), SIMULATION_VIEW_KEY.encode()):
+            self.send_json(403, {"error": "Clé de consultation invalide."})
+            return
+        if not SIMULATION_VIEW_TARGET_RE.fullmatch(target):
+            target = "#/communaute"
+        with community.tx() as conn:
+            row = conn.execute("SELECT id FROM users WHERE username = ? AND status = 'active'", (username,)).fetchone()
+            if not row:
+                self.send_json(404, {"error": "Compte simulé introuvable."})
+                return
+            req = community.Req(conn, "", self.headers, {}, self.client_address[0])
+            community._start_session(req, row["id"])
+        self.send_response(303)
+        for header, value in req.out_headers:
+            self.send_header(header, value)
+        self.send_header("Location", "/arbitre.html" + target)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def start_simulation(self):
+        global simulation_process
+        if SIMULATION_MODE or not self.simulation_is_local():
+            self.send_json(403, {"error": "Console réservée à cette machine."})
+            return
+        origin = self.headers.get("Origin")
+        if self.headers.get("X-Rhetora") != "1" or not origin or urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+            self.send_json(403, {"error": "Origine de la requête refusée."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 4096:
+                raise ValueError("Requête invalide.")
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError("Requête invalide.")
+            users, concurrency = payload.get("users"), payload.get("concurrency")
+            duration_seconds, mode = payload.get("duration_seconds"), payload.get("mode")
+            seed, pace = payload.get("seed", 42), payload.get("pace", "realistic")
+            ramp_seconds, p95_budget_ms = payload.get("ramp_seconds", 10), payload.get("p95_budget_ms", 2000)
+            keep_open_seconds = payload.get("keep_open_seconds", 0)
+            signups_per_minute = payload.get("signups_per_minute", 0)
+            visit_percent = payload.get("visit_percent", 100)
+            if type(visit_percent) is not int or not 1 <= visit_percent <= 100:
+                raise ValueError("La part des comptes qui se connectent doit être entre 1 et 100 %.")
+            if type(users) is not int or not 1 <= users <= 10000:
+                raise ValueError("Le nombre d'acteurs doit être entre 1 et 10000.")
+            if type(concurrency) is not int or not 1 <= concurrency <= min(users, 100):
+                raise ValueError("La concurrence doit être entre 1 et 100 et ne pas dépasser le nombre d'acteurs.")
+            if type(duration_seconds) is not int or not 30 <= duration_seconds <= 1200:
+                raise ValueError("La durée doit être entre 30 secondes et 20 minutes.")
+            if mode not in ("balanced", "complete", "community", "messages", "reader", "creator"):
+                raise ValueError("Profil de simulation inconnu.")
+            if type(signups_per_minute) is not int or not 0 <= signups_per_minute <= 600:
+                raise ValueError("Les nouvelles inscriptions doivent être entre 0 et 600 par minute.")
+            if type(seed) is not int or not 0 <= seed <= 2147483647:
+                raise ValueError("La graine doit être un entier entre 0 et 2147483647.")
+            if pace not in ("realistic", "load"):
+                raise ValueError("Rythme inconnu.")
+            if type(ramp_seconds) is not int or not 0 <= ramp_seconds <= 300:
+                raise ValueError("La montée en charge doit être entre 0 et 300 secondes.")
+            if type(p95_budget_ms) is not int or not 1 <= p95_budget_ms <= 60000:
+                raise ValueError("Le budget p95 doit être entre 1 et 60000 millisecondes.")
+            if type(keep_open_seconds) is not int or not 0 <= keep_open_seconds <= 3600:
+                raise ValueError("La sandbox peut rester ouverte de 0 à 3600 secondes.")
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json(400, {"error": str(error) or "Requête invalide."})
+            return
+
+        with simulation_lock:
+            if simulation_process and simulation_process.poll() is None:
+                try:
+                    with open(SIMULATION_STATUS_FILE, encoding="utf-8") as state_file:
+                        previous_status = json.load(state_file).get("status")
+                except (OSError, ValueError):
+                    previous_status = "running"
+                if previous_status == "running":
+                    self.send_json(409, {"error": "Une simulation est déjà en cours."})
+                    return
+                os.makedirs(SIMULATION_DIR, exist_ok=True)
+                with open(SIMULATION_CANCEL_FILE, "w", encoding="utf-8") as cancel_file:
+                    cancel_file.write("close\n")
+                try:
+                    simulation_process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    self.send_json(409, {"error": "La sandbox précédente se ferme encore; réessayez."})
+                    return
+            os.makedirs(SIMULATION_DIR, exist_ok=True)
+            for stale in (SIMULATION_CANCEL_FILE, SIMULATION_ACTIVITY_FILE, SIMULATION_ACTORS_FILE):
+                try:
+                    os.remove(stale)
+                except FileNotFoundError:
+                    pass
+            initial = {"status": "running", "phase": "Démarrage du serveur isolé", "request_count": 0,
+                       "configuration": {"users": users, "concurrency": concurrency,
+                                         "duration_seconds": duration_seconds, "mode": mode,
+                                         "seed": seed, "pace": pace, "ramp_seconds": ramp_seconds,
+                                         "p95_budget_ms": p95_budget_ms, "keep_open_seconds": keep_open_seconds,
+                                         "signups_per_minute": signups_per_minute, "visit_percent": visit_percent},
+                       "actions": {}, "recent_events": [], "errors": [], "updated_at": time.time()}
+            temporary = SIMULATION_STATUS_FILE + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as state_file:
+                json.dump(initial, state_file)
+            os.replace(temporary, SIMULATION_STATUS_FILE)
+            environment = os.environ.copy()
+            for key in list(environment):
+                upper = key.upper()
+                if "API_KEY" in upper or "APIKEY" in upper or "SECRET" in upper or "PASSWORD" in upper:
+                    environment.pop(key, None)
+            try:
+                with open(SIMULATION_LOG_FILE, "w", encoding="utf-8") as simulation_log:
+                    simulation_process = subprocess.Popen(
+                        [sys.executable, "-u", os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulate.py"),
+                         "--users", str(users), "--concurrency", str(concurrency), "--output", SIMULATION_DIR,
+                         "--duration-seconds", str(duration_seconds), "--mode", mode,
+                         "--seed", str(seed), "--pace", pace, "--ramp-seconds", str(ramp_seconds),
+                         "--p95-budget-ms", str(p95_budget_ms), "--keep-open-seconds", str(keep_open_seconds),
+                         "--signups-per-minute", str(signups_per_minute), "--visit-percent", str(visit_percent),
+                         "--status-file", SIMULATION_STATUS_FILE, "--cancel-file", SIMULATION_CANCEL_FILE],
+                        cwd=os.path.dirname(os.path.abspath(__file__)),
+                        env=environment,
+                        stdin=subprocess.DEVNULL,
+                        stdout=simulation_log,
+                        stderr=subprocess.STDOUT,
+                    )
+            except OSError as error:
+                initial.update(status="failed", phase="Impossible de lancer le scénario")
+                initial["errors"] = [{"action": "simulation", "status": 0, "message": str(error)[:240]}]
+                with open(temporary, "w", encoding="utf-8") as state_file:
+                    json.dump(initial, state_file)
+                os.replace(temporary, SIMULATION_STATUS_FILE)
+                self.send_json(500, {"error": "Le processus de simulation n'a pas pu démarrer."})
+                return
+        self.send_json(202, {"status": "started", "users": users, "concurrency": concurrency})
+
+    def stop_simulation(self):
+        if not self.simulation_is_local():
+            self.send_json(403, {"error": "Console réservée à cette machine."})
+            return
+        origin = self.headers.get("Origin")
+        if self.headers.get("X-Rhetora") != "1" or not origin or urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+            self.send_json(403, {"error": "Origine de la requête refusée."})
+            return
+        with simulation_lock:
+            if not simulation_process or simulation_process.poll() is not None:
+                self.send_json(409, {"error": "Aucune simulation active à arrêter."})
+                return
+            os.makedirs(SIMULATION_DIR, exist_ok=True)
+            with open(SIMULATION_CANCEL_FILE, "w", encoding="utf-8") as cancel_file:
+                cancel_file.write("stop\n")
+        self.send_json(202, {"status": "stopping"})
 
     def analyze_file(self, ctx):
         """Reçoit un fichier audio/vidéo (corps brut, en flux vers un fichier temporaire) et lance son analyse"""
@@ -1059,14 +1423,21 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Pas de logs HTTP (polling)
 
+
+class RhetoraHTTPServer(ThreadingHTTPServer):
+    # La file par défaut (5) refuse des connexions lors des pics de requêtes simultanées.
+    request_queue_size = 256
+
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    if SIMULATION_MODE and os.environ.get("ARBITRE_HOST", "") not in ("", "127.0.0.1"):
+        raise SystemExit("Le mode simulation ne peut écouter que sur 127.0.0.1.")
     community.init()
     community.HOOKS.update(chat=hook_chat, test=hook_test)
     print(f"http://localhost:{PORT}/arbitre.html")
     host = os.environ.get("ARBITRE_HOST", "")  # ex. IP Wi-Fi pour un accès depuis le téléphone (en plus de localhost)
     if host and host != "127.0.0.1":
-        lan = ThreadingHTTPServer((host, PORT), Handler)
+        lan = RhetoraHTTPServer((host, PORT), Handler)
         threading.Thread(target=lan.serve_forever, daemon=True).start()
         print(f"Réseau local : http://{host}:{PORT}/arbitre.html")
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    RhetoraHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

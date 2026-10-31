@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Rhetora — analyser un débat",
+  "short_name": "Rhetora",
+  "version": "1.0.0",
+  "description": "Envoie une vidéo YouTube à Rhetora pour analyser le débat, ou cherche des débats depuis la barre d’adresse (mot-clé « rh »).",
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": {
+    "default_title": "Analyser ce débat avec Rhetora",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png" }
+  },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["contextMenus", "storage", "activeTab"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "omnibox": { "keyword": "rh" },
+  "commands": {
+    "analyze-tab": {
+      "suggested_key": { "default": "Alt+Shift+R" },
+      "description": "Analyser la vidéo YouTube de l’onglet avec Rhetora"
+    }
+  }
+}
