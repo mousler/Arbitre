@@ -336,6 +336,33 @@ def transcribe_segment(engine, keys, path, index, total, lang):
     return text.strip()
 
 
+def ytdlp_binary():
+    configured = os.environ.get("YTDLP_BINARY")
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", "yt-dlp_macos")
+    for path in (configured, bundled, shutil.which("yt-dlp")):
+        if path and os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def download_youtube_with_binary(binary, url, output):
+    cmd = [
+        binary, "--no-warnings", "--no-playlist",
+        "--format", YDL_DOWNLOAD["format"],
+        "--concurrent-fragments", "1",
+        "--extractor-args", "youtube:formats=dashy",
+        "--output", output, "--print-json", url,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode:
+        detail = proc.stderr.strip() or "yt-dlp a échoué sans détail"
+        raise RuntimeError(detail[-1000:])
+    try:
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        raise RuntimeError("yt-dlp n’a pas retourné les métadonnées de la vidéo")
+
+
 def transcribe_youtube(url, engine, keys, log=print):
     """Télécharge l'audio YouTube, le découpe et retourne la transcription complète (log : suivi de progression)"""
     if engine not in ENGINES:
@@ -347,17 +374,23 @@ def transcribe_youtube(url, engine, keys, log=print):
         raise RuntimeError("Clé API Gemini requise")
     if engine.startswith("groq") and not keys.get("groq"):
         raise RuntimeError("Clé API Groq requise")
-    try:
-        import yt_dlp
-    except ImportError:
-        raise RuntimeError("yt-dlp manquant. pip install yt-dlp")
+    binary = ytdlp_binary()
+    yt_dlp = None
+    if not binary:
+        try:
+            import yt_dlp
+        except ImportError:
+            raise RuntimeError("yt-dlp manquant. pip install yt-dlp")
 
     with tempfile.TemporaryDirectory() as folder:
         output = os.path.join(folder, "source.%(ext)s")
         log("[1/4] Téléchargement audio...")
         started = time.monotonic()
-        with yt_dlp.YoutubeDL({**YDL_BASE, **YDL_DOWNLOAD, "outtmpl": output}) as dl:
-            info = dl.extract_info(url, download=True)
+        if binary:
+            info = download_youtube_with_binary(binary, url, output)
+        else:
+            with yt_dlp.YoutubeDL({**YDL_BASE, **YDL_DOWNLOAD, "outtmpl": output}) as dl:
+                info = dl.extract_info(url, download=True)
         elapsed = time.monotonic() - started
 
         files = glob.glob(os.path.join(folder, "source.*"))
