@@ -2174,6 +2174,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
 }`;
 
     const KEYS = { session: 'arbitre-session-v1', history: 'arbitre-conversations-v1', settings: 'arbitre-settings-v1', theme: 'arbitre-theme', view: 'arbitre-view', watch: 'arbitre-watchlist-v1', explore: 'arbitre-explore-v1', queue: 'arbitre-queue-v1', live: 'arbitre-live-v1', structMode: 'arbitre-struct-mode', announce: 'rhetora-announce-dismissed', legacyKeys: 'rhetora-legacy-keys' };
+    let legacyKeys = null;
     const EXPLORE_THEMES = [
       ['une', 'À la une', '', ''], ['politique', 'Politique', 'politique', 'politics'], ['economie', 'Économie', 'économie', 'economics'],
       ['climat', 'Climat & énergie', 'climat énergie', 'climate energy'], ['science', 'Science', 'science', 'science'], ['ia', 'IA & tech', 'intelligence artificielle', 'artificial intelligence'],
@@ -2399,9 +2400,11 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
     }
     function loadData() {
       const settings = readJson(KEYS.settings, {}) || {};
-      // Anciennes clés API du navigateur : mises de côté pour être transférées au serveur par un administrateur
-      const legacy = { groq: String(settings.groqKey || localStorage.getItem('arbitre-groq-key') || '').trim(), gemini: String(settings.apiKey || '').trim() };
-      if (legacy.groq || legacy.gemini) localStorage.setItem(KEYS.legacyKeys, JSON.stringify(legacy));
+      // Anciennes clés API du navigateur : gardées en mémoire seulement, le temps qu'un administrateur les transfère au serveur
+      const stored = readJson(KEYS.legacyKeys, null) || {};
+      const legacy = { groq: String(settings.groqKey || localStorage.getItem('arbitre-groq-key') || stored.groq || '').trim(), gemini: String(settings.apiKey || stored.gemini || '').trim() };
+      if (legacy.groq || legacy.gemini) legacyKeys = legacy;
+      localStorage.removeItem(KEYS.legacyKeys);
       localStorage.removeItem('arbitre-groq-key');
       if (['groqKey', 'apiKey', 'transcribeEngine', 'analysisEngine'].some(k => k in settings)) {
         for (const k of ['groqKey', 'apiKey', 'transcribeEngine', 'analysisEngine']) delete settings[k];
@@ -3405,7 +3408,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
         : analyzed
           ? `<button class="btn primary sm" data-history-id="${escapeHtml(analyzed)}">${icon('scale')}Voir l’analyse</button>`
           : `<button class="btn primary sm" data-analyze-video="${escapeHtml(v.id)}">${icon('plus')}Analyser</button>`;
-      const meta = [v.channelUrl ? `<a href="${escapeHtml(v.channelUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(v.channel)}</a>` : escapeHtml(v.channel), escapeHtml(fmtViews(v.views))].filter(Boolean).join(' · ');
+      const meta = [/^https:\/\/(www\.)?youtube\.com\//.test(v.channelUrl || '') ? `<a href="${escapeHtml(v.channelUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(v.channel)}</a>` : escapeHtml(v.channel), escapeHtml(fmtViews(v.views))].filter(Boolean).join(' · ');
       return `<article class="video">
         <div class="thumb">
           <img src="https://i.ytimg.com/vi/${encodeURIComponent(v.id)}/mqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer">
@@ -5106,19 +5109,19 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       renderAccount(); renderAnnounce(); renderEngine(); renderNotifBell();
       migrateLegacyKeys();
     }
-    // Les clés API autrefois saisies dans ce navigateur sont transférées au serveur par un administrateur, puis effacées
+    // Les clés API autrefois saisies dans ce navigateur sont transférées au serveur par un administrateur, puis oubliées
     async function migrateLegacyKeys() {
-      const legacy = readJson(KEYS.legacyKeys, null);
+      const legacy = legacyKeys;
       if (!legacy || !auth.user) return;
-      if (!isAdmin()) { localStorage.removeItem(KEYS.legacyKeys); return; }
+      legacyKeys = null;
+      if (!isAdmin()) return;
       try {
         const d = await api('/api/admin/settings'), secrets = {};
         if (legacy.groq && !d.secrets?.groq?.set) secrets.groq = legacy.groq;
         if (legacy.gemini && !d.secrets?.gemini?.set) secrets.gemini = legacy.gemini;
         if (Object.keys(secrets).length) await api('/api/admin/settings', { method: 'PUT', body: { secrets } });
-        localStorage.removeItem(KEYS.legacyKeys);
         if (Object.keys(secrets).length) { notify('Les clés API de ce navigateur ont été transférées sur le serveur (Administration › Modèle IA).', 'success'); refreshMe(); }
-      } catch { /* nouvel essai au prochain chargement */ }
+      } catch { notify('Les anciennes clés API de ce navigateur n’ont pas pu être transférées : saisissez-les dans Administration › Modèle IA.', 'error'); }
     }
 
     // Notifications (cloche)
@@ -6071,6 +6074,11 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
             <div class="row"><button class="btn sm primary" data-action="avatarPick">${icon('camera', 14)}${me.avatar ? 'Changer la photo' : 'Ajouter une photo'}</button>${me.avatar ? `<button class="btn sm" data-action="avatarRemove">${icon('trash', 14)}Retirer</button>` : ''}</div></div></div></section>
         <section class="acct-sec"><h3>${icon('edit', 18)}Présentation</h3>
           <form class="form-grid" data-form="bio"><div class="field"><label for="meBio">Bio</label><textarea id="meBio" name="bio" maxlength="280" placeholder="Quelques mots sur vous, vos sujets de débat favoris…">${escapeHtml(u.bio || '')}</textarea></div><div><button class="btn sm primary" type="submit">Enregistrer la bio</button></div></form></section>
+        <section class="acct-sec"><h3>${icon('mail', 18)}Adresse e-mail</h3>
+          <p class="help">${escapeHtml(me.email || '')} · ${me.email_verified ? lozenge('Confirmée', 'green') : lozenge('Non confirmée', 'yellow')}</p>
+          ${me.email_verified ? '<p class="help">Les messages de l’administration peuvent vous être envoyés par e-mail.</p>'
+            : auth.config.email_verification ? `<p class="help">Confirmez votre adresse pour recevoir les e-mails de rhetora.</p><button class="btn sm" data-action="verifyEmail">${icon('mail', 14)}Envoyer le lien de confirmation</button>`
+            : '<p class="help">Aucun e-mail n’est envoyé tant que l’adresse n’est pas confirmée ; la confirmation sera possible quand l’administration aura configuré l’envoi d’e-mails.</p>'}</section>
         <section class="acct-sec"><div class="acct-sec-head"><h3>${icon('mail', 18)}Messages privés</h3><span class="spacer"></span><button class="btn sm" data-action="dmOpen">${icon('mail', 14)}Ouvrir ma messagerie</button></div>
           <p class="help">Qui peut vous écrire ? Vous pouvez toujours répondre aux personnes qui vous ont écrit, et bloquer un membre depuis la conversation.</p>
           <div class="chips">${Object.entries(DM_POLICY_LABEL).map(([k, l]) => `<button class="chip ${(me.dm_policy || 'all') === k ? 'active' : ''}" data-action="dmPolicy" data-policy="${k}">${l}</button>`).join('')}</div></section>
@@ -7284,6 +7292,13 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
         try { await api(`/api/me/sessions/${btn.dataset.id}`, { method: 'DELETE' }); notify('Appareil déconnecté.', 'success'); loadMeData('sessions'); }
         catch (e) { fail(e); }
       },
+      async verifyEmail(btn) {
+        btn.disabled = true;
+        try {
+          const r = await api('/api/me/verify-email', { method: 'POST' });
+          notify(r.verified ? 'Adresse déjà confirmée.' : 'Lien de confirmation envoyé : consultez votre boîte de réception.', 'success');
+        } catch (e) { fail(e); btn.disabled = false; }
+      },
       async sessRevokeOthers() {
         if (!confirm('Déconnecter tous vos autres appareils ?')) return;
         try { const r = await api('/api/me/sessions/revoke-others', { method: 'POST' }); notify(`${pl(r.closed, 'session fermée', 'sessions fermées')}.`, 'success'); loadMeData('sessions'); }
@@ -7640,7 +7655,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
         if (dm.peer !== name) return;
         dm.thread = older ? { ...d, messages: [...d.messages, ...t.messages] } : d;
         dm.threadError = '';
-        auth.user.dm_unread = d.unread; dmBadge();
+        auth.user.dm_unread = older ? d.unread : await dmMarkRead(name, d.unread); dmBadge();
         const c = dm.convs.find(x => x.user.username === name);
         if (c) c.unread = 0;
       } catch (e) {
@@ -7667,12 +7682,17 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
             Object.assign(t, { seen_id: d.seen_id, can_send: d.can_send, reason: d.reason, blocked: d.blocked, user: d.user });
             t.messages.push(...fresh);
             if (changed) renderDmThread(fresh.length ? 'follow' : 'keep');
-            auth.user.dm_unread = d.unread; dmBadge();
+            auth.user.dm_unread = fresh.some(m => !m.mine) ? await dmMarkRead(name, d.unread) : d.unread; dmBadge();
           }
         }
         if (force || !name || dm.tick % 3 === 0) await dmLoadList();
       } catch { /* nouvel essai au prochain passage */ }
       dm.polling = false;
+    }
+    // La lecture d'une conversation est confirmée par une requête explicite (protégée contre les liens externes)
+    async function dmMarkRead(name, fallback) {
+      try { return (await api(`/api/me/messages/${encodeURIComponent(name)}/read`, { method: 'POST' })).unread; }
+      catch { return fallback; }
     }
     setInterval(dmPoll, 4000);
     function dmConvRow(c) {
@@ -7884,7 +7904,13 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       const post = hash.match(/^#\/post\/(\d+)$/), user = hash.match(/^#\/u\/(.+)$/), liveId = hash.match(/^#\/live\/(\d+)$/);
       const msgs = hash.match(/^#\/messages(?:\/(.+))?$/);
       const intake = hash.match(/^#\/(analyser|explorer)\?(.*)$/);
-      if (intake) {
+      const verification = hash.match(/^#\/verification\?statut=(ok|invalide)$/);
+      if (verification) {
+        history.replaceState(null, '', location.pathname + location.search);
+        notify(verification[1] === 'ok' ? 'Adresse e-mail confirmée. Merci !' : 'Lien de confirmation invalide ou expiré : demandez-en un nouveau depuis votre profil.', verification[1] === 'ok' ? 'success' : 'error');
+        if (verification[1] === 'ok') refreshMe();
+      }
+      else if (intake) {
         const params = new URLSearchParams(intake[2]);
         if (intake[1] === 'analyser') receiveVideo(params.get('url') || '');
         else exploreFromLink((params.get('q') || '').trim().slice(0, 150));

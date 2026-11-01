@@ -9,6 +9,8 @@ import base64
 import binascii
 import hashlib
 import hmac
+import io
+import ipaddress
 import json
 import math
 import os
@@ -34,6 +36,12 @@ DB_PATH = os.path.join(DATA_DIR, "rhetora.db")
 # Nom distinct en sandbox : les cookies d'hôte ne sont pas isolés par port sur 127.0.0.1.
 COOKIE = "rh_sim_session" if os.environ.get("RHETORA_SIMULATION_MODE") == "1" else "rh_session"
 SESSION_TTL = 30 * 86400
+# À activer (RHETORA_SECURE_COOKIE=1) dès que le site est servi en HTTPS : le cookie ne circule plus jamais en clair.
+SECURE_COOKIE = os.environ.get("RHETORA_SECURE_COOKIE") == "1"
+# Clé de chiffrement des secrets hors du dossier data/ : une copie de la base seule ne les révèle pas.
+SECRET_KEY_FILE = os.environ.get("RHETORA_SECRET_KEY_FILE") or os.path.join(os.path.expanduser("~"), ".rhetora", "secret.key")
+VERIFY_TTL = 3 * 86400
+IMAGE_MAX_SIDE, IMAGE_MAX_PIXELS = 8000, 40_000_000
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 3_000_000
 MAX_SNAPSHOT = 2_000_000
@@ -104,7 +112,8 @@ DEFAULT_SETTINGS = {
 }
 USER_COLUMNS = {"blocked": "TEXT NOT NULL DEFAULT '[]'", "quota": "INTEGER", "verified": "INTEGER NOT NULL DEFAULT 0",
                 "note": "TEXT NOT NULL DEFAULT ''", "email_ok": "INTEGER NOT NULL DEFAULT 1", "avatar": "TEXT",
-                "prefs": "TEXT NOT NULL DEFAULT '{}'", "dm_policy": "TEXT NOT NULL DEFAULT 'all'"}
+                "prefs": "TEXT NOT NULL DEFAULT '{}'", "dm_policy": "TEXT NOT NULL DEFAULT 'all'",
+                "email_verified": "INTEGER NOT NULL DEFAULT 0", "verify_token": "TEXT", "verify_expires": "INTEGER NOT NULL DEFAULT 0"}
 COMMENT_COLUMNS = {"attachment": "TEXT", "ai": "TEXT", "edited_at": "INTEGER"}
 POST_COLUMNS = {"images": "TEXT NOT NULL DEFAULT '[]'"}
 SESSION_COLUMNS = {"ip": "TEXT NOT NULL DEFAULT ''", "device": "TEXT NOT NULL DEFAULT ''", "seen_at": "INTEGER NOT NULL DEFAULT 0",
@@ -276,13 +285,31 @@ DUMMY_HASH = hash_password(secrets.token_hex(8))  # égalise le temps de répons
 
 _hits = {}
 _hits_lock = threading.Lock()
+_hits_swept = [0.0]
+HITS_MAX_WINDOW = 3600  # plus longue fenêtre utilisée : au-delà, une clé inactive est oubliée
+
+
+def _hit(key, limit, window, record=True):
+    """Vérifie et enregistre une tentative en une seule section critique ; renvoie True si la limite est atteinte"""
+    t = time.time()
+    with _hits_lock:
+        recent = [h for h in _hits.get(key, ()) if t - h < window]
+        blocked = len(recent) >= limit
+        if record and not blocked:
+            recent.append(t)
+        if recent:
+            _hits[key] = recent
+        else:
+            _hits.pop(key, None)
+        if t - _hits_swept[0] > 300:
+            _hits_swept[0] = t
+            for k in [k for k, v in _hits.items() if not v or t - v[-1] > HITS_MAX_WINDOW]:
+                del _hits[k]
+        return blocked
 
 
 def _blocked(key, limit, window):
-    t = time.time()
-    with _hits_lock:
-        _hits[key] = [h for h in _hits.get(key, []) if t - h < window]
-        return len(_hits[key]) >= limit
+    return _hit(key, limit, window, record=False)
 
 
 def _record(key):
@@ -290,10 +317,23 @@ def _record(key):
         _hits.setdefault(key, []).append(time.time())
 
 
+def _release(key):
+    """Annule la dernière tentative réservée (tentative réussie)"""
+    with _hits_lock:
+        if _hits.get(key):
+            _hits[key].pop()
+
+
 def _limit(key, limit, window, message="Trop de requêtes : patientez un peu."):
-    if _blocked(key, limit, window):
+    if _hit(key, limit, window):
         raise ApiError(429, message)
-    _record(key)
+
+
+def _is_loopback(ip):
+    try:
+        return ipaddress.ip_address(ip).is_loopback
+    except ValueError:
+        return False
 
 
 @contextmanager
@@ -329,6 +369,14 @@ def init():
         _add_columns(conn, "comments", COMMENT_COLUMNS)
         _add_columns(conn, "posts", POST_COLUMNS)
         _add_columns(conn, "sessions", SESSION_COLUMNS)
+        if not conn.execute("SELECT 1 FROM settings WHERE key = 'migr:email_verified'").fetchone():
+            # Les comptes antérieurs à la vérification des adresses gardent leurs e-mails
+            conn.execute("UPDATE users SET email_verified = 1")
+            conn.execute("INSERT INTO settings (key, value) VALUES ('migr:email_verified', '1')")
+        for name in SECRETS:
+            value = _stored_secret(conn, name)
+            if value and _cipher() and not _raw_secret(conn, name).startswith(SECRET_PREFIX):
+                set_secret(conn, name, value)
         maintenance(conn, force=True)
         # Anciens « j'aime » → réactions
         conn.execute("INSERT OR IGNORE INTO reactions (target_type, target_id, user_id, kind, created_at) SELECT 'post', post_id, user_id, 'like', ? FROM likes", (now(),))
@@ -359,7 +407,7 @@ def user_public(row, private=False):
             "xp": row["xp"], "streak": current_streak(row), "best_streak": row["best_streak"], "created_at": row["created_at"],
             "verified": bool(row["verified"]), "avatar": row["avatar"]}
     if private:
-        data |= {"email": row["email"], "blocked": blocked_perms(row), "prefs": user_prefs(row),
+        data |= {"email": row["email"], "email_verified": bool(row["email_verified"]), "blocked": blocked_perms(row), "prefs": user_prefs(row),
                  "dm_policy": row["dm_policy"] if row["dm_policy"] in DM_POLICIES else "all"}
     return data | level_info(row["xp"])
 
@@ -518,13 +566,55 @@ def get_settings(conn):
     return out
 
 
-def _stored_secret(conn, name):
+SECRET_PREFIX = "enc:v1:"
+_cipher_cache = []
+
+
+def _cipher():
+    """AES-GCM (cryptography) avec une clé conservée hors de la base ; None si la bibliothèque est absente"""
+    if _cipher_cache:
+        return _cipher_cache[0]
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        print("⚠ cryptography absent : secrets stockés en clair (pip install cryptography).")
+        _cipher_cache.append(None)
+        return None
+    env = os.environ.get("RHETORA_SECRET_KEY", "").strip()
+    if env:
+        key = base64.urlsafe_b64decode(env + "=" * (-len(env) % 4))
+    elif os.path.isfile(SECRET_KEY_FILE):
+        with open(SECRET_KEY_FILE, "rb") as f:
+            key = base64.urlsafe_b64decode(f.read().strip())
+    else:
+        key = AESGCM.generate_key(bit_length=256)
+        os.makedirs(os.path.dirname(SECRET_KEY_FILE), exist_ok=True)
+        with open(os.open(SECRET_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as f:
+            f.write(base64.urlsafe_b64encode(key))
+    _cipher_cache.append(AESGCM(key))
+    return _cipher_cache[0]
+
+
+def _raw_secret(conn, name):
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (SECRETS[name],)).fetchone()
     try:
         value = json.loads(row["value"]) if row else ""
     except ValueError:
         value = ""
     return value if isinstance(value, str) else ""
+
+
+def _stored_secret(conn, name):
+    value = _raw_secret(conn, name)
+    if not value.startswith(SECRET_PREFIX):
+        return value  # ancien secret en clair : rechiffré au prochain démarrage
+    cipher = _cipher()
+    try:
+        blob = base64.b64decode(value[len(SECRET_PREFIX):])
+        return cipher.decrypt(blob[:12], blob[12:], SECRETS[name].encode()).decode() if cipher else ""
+    except Exception:
+        print(f"⚠ Secret « {name} » indéchiffrable : clé {SECRET_KEY_FILE} absente ou changée. Ressaisissez-le dans l’administration.")
+        return ""
 
 
 def get_secret(conn, name):
@@ -541,6 +631,10 @@ def secret_info(conn, name):
 
 def set_secret(conn, name, value):
     if value:
+        cipher = _cipher()
+        if cipher:
+            nonce = secrets.token_bytes(12)
+            value = SECRET_PREFIX + base64.b64encode(nonce + cipher.encrypt(nonce, value.encode(), SECRETS[name].encode())).decode()
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (SECRETS[name], json.dumps(value)))
     else:
         conn.execute("DELETE FROM settings WHERE key = ?", (SECRETS[name],))
@@ -573,7 +667,12 @@ def public_config(conn):
                          "require_account": llm["require_account"], "daily_quota": llm["daily_quota"],
                          "comment_ai": bool(llm["comment_ai"]) and status["ready"]},
         "reactions": list(REACTIONS),
+        "email_verification": smtp_ready(s["smtp"]),
     }
+
+
+def smtp_ready(smtp):
+    return bool(smtp.get("host") and smtp.get("from_email"))
 
 
 # ---------- Quotas IA ----------
@@ -616,7 +715,7 @@ def canonical(name):
 def clean_snapshot(snap, with_transcript):
     if not isinstance(snap, dict):
         raise ApiError(400, "Débat manquant.")
-    analysis = snap.get("analysis") if isinstance(snap.get("analysis"), dict) else None
+    analysis = _clean_analysis(snap.get("analysis"))
     out = {
         "topic": _str(snap.get("topic"), 200),
         "speakers": [s for s in (_str(x, 60) for x in _list(snap.get("speakers"))[:8]) if s],
@@ -630,6 +729,42 @@ def clean_snapshot(snap, with_transcript):
     if len(json.dumps(out, ensure_ascii=False).encode()) > MAX_SNAPSHOT:
         raise ApiError(413, "Débat trop volumineux : publiez-le sans la transcription.")
     return out
+
+
+ORATOR_LISTS = ("arguments", "sophismes", "incoherences")
+MAP_LISTS = ("arguments", "objections", "refutations", "sophismes", "phases")
+MAP_OBJECTS = ("these", "pour", "contre", "conclusion", "evaluation", "dynamique", "hypotheses")
+
+
+def _clean_analysis(value):
+    """Garantit la forme attendue par l'affichage (objets et listes d'objets) : une publication forgée ne peut pas casser la page"""
+    if not isinstance(value, dict):
+        return None
+    out = dict(value)
+    speakers = []
+    for o in _list(value.get("orateurs"))[:20]:
+        if not isinstance(o, dict):
+            continue
+        o = dict(o, nom=_str(o.get("nom"), 80) or "Orateur", these_principale=_str(o.get("these_principale"), 1000))
+        for field in ORATOR_LISTS:
+            o[field] = [x for x in _list(o.get(field)) if isinstance(x, dict)][:200]
+        o["faits_a_verifier"] = [x for x in _list(o.get("faits_a_verifier")) if isinstance(x, str)][:200]
+        speakers.append(o)
+    out["orateurs"] = speakers
+    out["synthese"] = value.get("synthese") if isinstance(value.get("synthese"), str) else ""
+    out["deroule"] = [x for x in _list(value.get("deroule")) if isinstance(x, str)]
+    carte = value.get("carte")
+    if isinstance(carte, dict):
+        carte = dict(carte)
+        for field in MAP_LISTS:
+            carte[field] = [x for x in _list(carte.get(field)) if isinstance(x, dict)]
+        for field in MAP_OBJECTS:
+            if field in carte and not isinstance(carte[field], dict):
+                carte[field] = {}
+        out["carte"] = carte
+    else:
+        out.pop("carte", None)
+    return out if speakers or out["synthese"] or "carte" in out else None
 
 
 def orators(snap):
@@ -767,7 +902,23 @@ def _token_hash(token):
 
 
 def _cookie(token, max_age):
-    return ("Set-Cookie", f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
+    secure = "; Secure" if SECURE_COOKIE else ""
+    return ("Set-Cookie", f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
+
+
+def session_user_id(headers):
+    """Identifiant du compte de la session portée par ces en-têtes (ou None) : sert à lier une tâche à son demandeur"""
+    try:
+        morsel = SimpleCookie(headers.get("Cookie") or "").get(COOKIE)
+    except CookieError:
+        return None
+    if not morsel or not morsel.value:
+        return None
+    with tx() as conn:
+        row = conn.execute("""SELECT s.user_id FROM sessions s JOIN users u ON u.id = s.user_id
+                              WHERE s.token = ? AND s.expires_at > ? AND u.status = 'active'""",
+                           (_token_hash(morsel.value), now())).fetchone()
+    return row["user_id"] if row else None
 
 
 def _load_user(req):
@@ -905,6 +1056,9 @@ def get_me(req):
 @route("POST", "/api/auth/register")
 def register(req):
     first = req.conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    if first and not _is_loopback(req.ip):
+        # Le premier compte devient administrateur : il ne peut pas être réclamé depuis le réseau.
+        raise ApiError(403, "Le premier compte (administrateur) doit être créé depuis la machine du serveur (http://localhost).")
     if not first and not get_settings(req.conn)["registrations_open"]:
         raise ApiError(403, "Les inscriptions sont fermées pour le moment.")
     username, email, password = _str(req.body.get("username"), 40), _str(req.body.get("email"), 254).lower(), req.body.get("password")
@@ -927,23 +1081,73 @@ def register(req):
     req.audit("Inscription", "premier compte : administrateur" if first else "")
     _start_session(req, uid)
     log_activity(req.conn, uid, "login", _device(req.headers.get("User-Agent")), req.ip)
+    _send_verification(req, req.user)
     return 201, {"user": user_public(req.user, private=True)}
+
+
+def _send_verification(req, user):
+    """Envoie le lien de vérification de l'adresse (si un serveur d'e-mail est configuré) ; renvoie True si envoyé"""
+    smtp = get_settings(req.conn)["smtp"]
+    if not smtp_ready(smtp):
+        return False
+    host = req.headers.get("Host") or ""
+    if not re.fullmatch(r"[\w.-]{1,253}(:\d{1,5})?", host):
+        return False
+    token = secrets.token_urlsafe(32)
+    req.conn.execute("UPDATE users SET verify_token = ?, verify_expires = ? WHERE id = ?", (_token_hash(token), now() + VERIFY_TTL, user["id"]))
+    scheme = "https" if SECURE_COOKIE else "http"
+    link = f"{scheme}://{host}/api/auth/verify-email?token={token}"
+    body = (f"Confirmez votre adresse en ouvrant ce lien (valable {VERIFY_TTL // 86400} jours) :\n\n{link}\n\n"
+            "Si vous n’êtes pas à l’origine de cette inscription, ignorez ce message.")
+    pwd = get_secret(req.conn, "smtp")
+    threading.Thread(target=_quiet_mail, args=(smtp, pwd, [(user["email"], user["username"])], "Confirmez votre adresse rhetora", body),
+                     daemon=True).start()
+    return True
+
+
+def _quiet_mail(smtp, pwd, recipients, subject, body):
+    try:
+        send_mail(smtp, pwd, recipients, subject, body)
+    except (ApiError, OSError, smtplib.SMTPException) as e:
+        print(f"⚠ E-mail de vérification non envoyé : {e}")
+
+
+@route("GET", "/api/auth/verify-email")
+def verify_email(req):
+    token = _str(req.query.get("token"), 100)
+    row = req.conn.execute("SELECT id FROM users WHERE verify_token = ? AND verify_expires > ?", (_token_hash(token), now())).fetchone() if token else None
+    if not row:
+        return Redirect("/arbitre.html#/verification?statut=invalide")
+    req.conn.execute("UPDATE users SET email_verified = 1, verify_token = NULL, verify_expires = 0 WHERE id = ?", (row["id"],))
+    log_activity(req.conn, row["id"], "profile", "Adresse e-mail confirmée", req.ip)
+    return Redirect("/arbitre.html#/verification?statut=ok")
+
+
+@route("POST", "/api/me/verify-email")
+def resend_verification(req):
+    user = req.need()
+    if user["email_verified"]:
+        return {"ok": True, "verified": True}
+    _limit(f"verify:{user['id']}", 3, 3600, "Lien déjà envoyé : consultez votre boîte de réception.")
+    if not _send_verification(req, user):
+        raise ApiError(400, "La vérification par e-mail n’est pas configurée sur ce serveur.")
+    return {"ok": True, "sent": True}
 
 
 @route("POST", "/api/auth/login")
 def login(req):
     ident, password = _str(req.body.get("login"), 254), req.body.get("password")
     key = f"login:{req.ip}"
-    if _blocked(key, 8, 600):
+    if _hit(key, 8, 600):  # tentative réservée avant la vérification : des essais simultanés ne dépassent pas la limite
         raise ApiError(429, "Trop de tentatives : réessayez dans quelques minutes.")
     row = req.conn.execute("SELECT * FROM users WHERE username = ? OR email = ?", (ident, ident.lower())).fetchone()
     ok = check_password(password if isinstance(password, str) else "", row["pw_hash"] if row else DUMMY_HASH)
     if not row or not ok:
-        _record(key)
         if row:  # tentative visible dans l'historique du compte visé
             log_activity(req.conn, row["id"], "login_failed", _device(req.headers.get("User-Agent")), req.ip)
             req.conn.commit()
         raise ApiError(401, "Identifiants incorrects.")
+    _release(key)
     if row["status"] != "active":
         raise ApiError(403, "Ce compte a été suspendu par la modération.")
     _start_session(req, row["id"])
@@ -969,13 +1173,19 @@ def update_me(req):
         log_activity(req.conn, user["id"], "profile", "Bio modifiée", req.ip)
     if req.body.get("new_password") is not None:
         current, new = req.body.get("current_password"), req.body.get("new_password")
+        key = f"sudo:{user['id']}"
+        if _hit(key, 5, 600):
+            raise ApiError(429, "Trop de tentatives : réessayez dans quelques minutes.")
         if not isinstance(current, str) or not check_password(current, user["pw_hash"]):
             raise ApiError(403, "Mot de passe actuel incorrect.")
+        _release(key)
         if not isinstance(new, str) or not 8 <= len(new) <= 200:
             raise ApiError(400, "Nouveau mot de passe : 8 caractères minimum.")
         req.conn.execute("UPDATE users SET pw_hash = ? WHERE id = ?", (hash_password(new), user["id"]))
-        req.conn.execute("DELETE FROM sessions WHERE user_id = ? AND token != ?", (user["id"], _token_hash(req.token)))
-        log_activity(req.conn, user["id"], "password", "Mot de passe modifié, autres sessions fermées", req.ip)
+        # Toutes les sessions tombent, y compris celle-ci (au cas où son jeton aurait fui) ; une nouvelle est ouverte, sans mode sécurisé.
+        req.conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+        _start_session(req, user["id"])
+        log_activity(req.conn, user["id"], "password", "Mot de passe modifié, toutes les sessions renouvelées", req.ip)
     if isinstance(req.body.get("prefs"), dict):
         raw, topics = req.body["prefs"], []
         for t in _list(raw.get("topics"))[:12]:
@@ -1108,8 +1318,9 @@ def list_posts(req):
         where.append("p.id IN (SELECT target_id FROM reactions WHERE target_type = 'post' AND user_id = ?)")
         args.append(liker["id"])
     if q.get("q"):
-        where.append("(p.title LIKE ? OR p.topic LIKE ? OR p.comment LIKE ?)")
-        args += [f"%{_str(q['q'], 100)}%"] * 3
+        _limit(f"psearch:{req.ip}", 90, 60, "Trop de recherches : patientez un instant.")
+        where.append(r"(p.title LIKE ? ESCAPE '\' OR p.topic LIKE ? ESCAPE '\' OR p.comment LIKE ? ESCAPE '\')")
+        args += [_like(_str(q["q"], 100))] * 3
     page = _int(q.get("page"), 1, 1, 500)
     reasons = {}
     where_sql = " WHERE " + " AND ".join(where) if where else ""
@@ -1172,7 +1383,9 @@ def get_post(req, pid):
     pid = int(pid)
     row = _fetch_post(req, pid)
     if not _bool(req.query.get("refresh")):
-        req.conn.execute("UPDATE posts SET views = views + 1 WHERE id = ?", (pid,))
+        viewer = f"u{req.user['id']}" if req.user else f"ip{req.ip}"
+        if not _hit(f"view:{pid}:{viewer}", 1, 3600):  # une vue par lecteur et par heure : un lien répété ne gonfle pas le compteur
+            req.conn.execute("UPDATE posts SET views = views + 1 WHERE id = ?", (pid,))
         if req.user:
             req.conn.execute("INSERT OR REPLACE INTO post_views (post_id, user_id, at) VALUES (?,?,?)", (pid, req.user["id"], now()))
     snap = json.loads(row["snapshot"])
@@ -1680,7 +1893,6 @@ def dm_thread(req, username):
     else:
         rows = req.conn.execute(f"SELECT * FROM dm_messages WHERE {_DM_PAIR}{' AND id < :before' if p['before'] else ''} ORDER BY id DESC LIMIT 51", p).fetchall()
         more, rows = len(rows) > 50, rows[:50][::-1]
-    req.conn.execute("UPDATE dm_messages SET read_at = ? WHERE sender_id = ? AND recipient_id = ? AND read_at IS NULL", (now(), peer["id"], user["id"]))
     seen = req.conn.execute("SELECT MAX(id) FROM dm_messages WHERE sender_id = ? AND recipient_id = ? AND read_at IS NOT NULL",
                             (user["id"], peer["id"])).fetchone()[0]
     social = {"i_follow": bool(req.conn.execute("SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?", (user["id"], peer["id"])).fetchone()),
@@ -1690,6 +1902,14 @@ def dm_thread(req, username):
     if more is not None:
         data["hasMore"] = more
     return data
+
+
+@route("POST", r"/api/me/messages/([^/]{1,200})/read")
+def dm_mark_read(req, username):
+    """Marque la conversation comme lue : action explicite (POST protégé), jamais déclenchée par un simple lien"""
+    user, peer = _dm_peer(req, username)
+    req.conn.execute("UPDATE dm_messages SET read_at = ? WHERE sender_id = ? AND recipient_id = ? AND read_at IS NULL", (now(), peer["id"], user["id"]))
+    return {"ok": True, "unread": _dm_unread(req.conn, user["id"])}
 
 
 @route("POST", r"/api/me/messages/([^/]{1,200})")
@@ -1867,7 +2087,8 @@ def ad_click(req, ad_id):
     ad = next((a for a in s["ads"] if a.get("id") == ad_id and a.get("active")), None) if s["ads_enabled"] else None
     if not ad or not _safe_url(ad.get("url")):
         raise ApiError(404, "Annonce introuvable.")
-    req.conn.execute("INSERT INTO ad_clicks (ad_id, clicks) VALUES (?, 1) ON CONFLICT(ad_id) DO UPDATE SET clicks = clicks + 1", (ad_id,))
+    if not _hit(f"adclick:{ad_id}:{req.ip}", 1, 3600):
+        req.conn.execute("INSERT INTO ad_clicks (ad_id, clicks) VALUES (?, 1) ON CONFLICT(ad_id) DO UPDATE SET clicks = clicks + 1", (ad_id,))
     return Redirect(ad["url"])
 
 
@@ -2008,6 +2229,7 @@ def admin_update_user(req, uid):
         if not EMAIL_RE.match(email):
             raise ApiError(400, "Adresse e-mail invalide.")
         update("email", email, "E-mail modifié", f"{row['email']} → {email}")
+        req.conn.execute("UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?", (row["id"],))
         notify(req.conn, row["id"], "security", admin["id"], title="Votre adresse e-mail a été modifiée par l’administration",
                body=f"Nouvelle adresse : {email}")
         alert_admins(req, f"E-mail de {name} modifié", f"Par {admin['username']} : {row['email']} → {email}")
@@ -2054,7 +2276,9 @@ def admin_reset_password(req, uid):
     log_activity(req.conn, row["id"], "admin", "Mot de passe réinitialisé")
     alert_admins(req, f"Mot de passe de {row['username']} réinitialisé", f"Par {admin['username']} (IP {req.ip}).")
     out = {"password": temp, "emailed": False}
-    if _bool(req.body.get("email")):
+    if _bool(req.body.get("email")) and not row["email_verified"]:
+        out["email_error"] = "Adresse non vérifiée : transmettez le mot de passe temporaire par un autre moyen."
+    elif _bool(req.body.get("email")):
         smtp, pwd = get_settings(req.conn)["smtp"], get_secret(req.conn, "smtp")
         req.conn.commit()
         try:
@@ -2095,6 +2319,8 @@ def send_mail(smtp, password, recipients, subject, body):
     """Envoie un e-mail texte à chaque (adresse, nom) ; renvoie (envoyés, erreurs)"""
     if not smtp.get("host") or not smtp.get("from_email"):
         raise ApiError(400, "Serveur d’e-mail non configuré (Administration › Paramètres › E-mails).")
+    if smtp["username"] and smtp["security"] not in ("ssl", "starttls"):
+        raise ApiError(400, "Identifiants SMTP refusés sans chiffrement : choisissez SSL ou STARTTLS.")
     ctx = ssl.create_default_context()
     sent, errors = 0, []
     if smtp["security"] == "ssl":
@@ -2161,7 +2387,7 @@ def admin_send_message(req):
     for r in rows:
         req.conn.execute("INSERT INTO notifications (user_id, kind, actor_id, title, body, created_at) VALUES (?,?,?,?,?,?)",
                          (r["id"], "message", admin["id"], subject, body, now()))
-    mail_to = [(r["email"], r["username"]) for r in rows if r["email_ok"]] if email else []
+    mail_to = [(r["email"], r["username"]) for r in rows if r["email_ok"] and r["email_verified"]] if email else []
     label = (", ".join(r["username"] for r in rows[:5]) + ("…" if len(rows) > 5 else "")) if target == "users" else target
     status = f"envoi de {len(mail_to)} e-mail(s)…" if mail_to else ("aucun destinataire n’accepte les e-mails" if email else "")
     cur = req.conn.execute("""INSERT INTO broadcasts (sender, target, subject, body, recipients, email_status, created_at)
@@ -2384,6 +2610,8 @@ def admin_put_settings(req):
         current["llm"] = _clean_llm(body["llm"], current["llm"])
     if "smtp" in body:
         current["smtp"] = _clean_smtp(body["smtp"], current["smtp"])
+        if current["smtp"]["username"] and current["smtp"]["security"] == "none":
+            raise ApiError(400, "Un identifiant SMTP exige un chiffrement (SSL ou STARTTLS) : le mot de passe circulerait en clair.")
     for key, value in current.items():
         if key in body:
             changed.append(key)
@@ -2694,14 +2922,14 @@ def delete_me(req):
     """Suppression de son propre compte : mot de passe + pseudo exigés ; le compte reste restaurable par l'administration"""
     user = req.need()
     key = f"sudo:{user['id']}"
-    if _blocked(key, 5, 600):
+    if _hit(key, 5, 600):
         raise ApiError(429, "Trop de tentatives : réessayez dans quelques minutes.")
     pw = req.body.get("password")
     if not isinstance(pw, str) or not check_password(pw, user["pw_hash"]):
-        _record(key)
         log_activity(req.conn, user["id"], "sudo_failed", "Suppression du compte : mot de passe erroné", req.ip)
         req.conn.commit()
         raise ApiError(403, "Mot de passe incorrect.")
+    _release(key)
     if _str(req.body.get("confirm"), 40) != user["username"]:
         raise ApiError(400, "Recopiez exactement votre pseudo pour confirmer.")
     if user["role"] == "admin" and req.conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active'").fetchone()[0] <= 1:
@@ -2731,6 +2959,8 @@ def maintenance(conn, force=False):
                     AND NOT EXISTS (SELECT 1 FROM posts p WHERE instr(p.images, media.id))
                     AND NOT EXISTS (SELECT 1 FROM trash t WHERE instr(t.data, media.id))""", (t - 3600,))
     conn.execute("DELETE FROM post_views WHERE at < ?", (t - 180 * 86400,))
+    conn.execute("UPDATE llm_usage SET ip = '' WHERE ip != '' AND created_at < ?", (t - 30 * 86400,))  # IP utiles au quota du jour seulement
+    conn.execute("UPDATE users SET verify_token = NULL, verify_expires = 0 WHERE verify_token IS NOT NULL AND verify_expires < ?", (t,))
     conn.execute("DELETE FROM live_chat WHERE live_id IN (SELECT id FROM lives WHERE status = 'ended' AND ended_at < ?)", (t - 30 * 86400,))
 
 
@@ -2739,14 +2969,14 @@ def maintenance(conn, force=False):
 def sudo(req):
     user = req.need()
     key = f"sudo:{user['id']}"
-    if _blocked(key, 5, 600):
+    if _hit(key, 5, 600):
         raise ApiError(429, "Trop de tentatives : réessayez dans quelques minutes.")
     pw = req.body.get("password")
     if not isinstance(pw, str) or not check_password(pw, user["pw_hash"]):
-        _record(key)
         log_activity(req.conn, user["id"], "sudo_failed", "Mot de passe erroné (action sensible)", req.ip)
         req.conn.commit()
         raise ApiError(403, "Mot de passe incorrect.")
+    _release(key)
     until = now() + SUDO_TTL
     req.conn.execute("UPDATE sessions SET sudo_until = ? WHERE rowid = ?", (until, user["sid"]))
     log_activity(req.conn, user["id"], "sudo", f"Mode sécurisé activé ({SUDO_TTL // 60} min)", req.ip)
@@ -2796,6 +3026,22 @@ def _image_mime(data):
     return None
 
 
+def _check_image_size(data):
+    """Refuse les images légères sur disque mais énormes une fois décodées (dimensions lues dans l'en-tête, sans tout décoder)"""
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            width, height = img.size
+            frames = getattr(img, "n_frames", 1)
+    except Exception:
+        raise ApiError(400, "Image illisible.")
+    if width > IMAGE_MAX_SIDE or height > IMAGE_MAX_SIDE or width * height * frames > IMAGE_MAX_PIXELS:
+        raise ApiError(413, f"Image trop grande ({IMAGE_MAX_SIDE} pixels de côté au maximum).")
+
+
 @route("POST", "/api/me/media")
 def upload_media(req):
     kind = req.body.get("kind")
@@ -2815,6 +3061,7 @@ def upload_media(req):
     mime = _image_mime(data)
     if not mime:
         raise ApiError(400, "Format non pris en charge : PNG, JPEG, WebP ou GIF uniquement.")
+    _check_image_size(data)
     _limit(f"media:{user['id']}", 40, 3600, "Trop d’images envoyées : patientez un peu.")
     mid = secrets.token_urlsafe(12)
     req.conn.execute("INSERT INTO media (id, user_id, kind, mime, data, size, used, created_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -2854,15 +3101,18 @@ def get_media(req, mid):
 _presence, _presence_lock = {}, threading.Lock()
 
 
-def _listeners(live_id, key=None):
+def _listeners(live_id, key=None, per_source=None):
     """Auditeurs présents (signe de vie depuis moins de 20 s), l'hôte n'est pas compté"""
     t = time.time()
     with _presence_lock:
         room = _presence.setdefault(live_id, {})
-        if key:
-            room[key] = t
         for k in [k for k, v in room.items() if t - v > 20]:
             del room[k]
+        if key:
+            source = key.split(":")[0]
+            # Un même visiteur anonyme ne compte que pour quelques onglets, quel que soit le paramètre « viewer » envoyé.
+            if key in room or not per_source or sum(k.split(":")[0] == source for k in room) < per_source:
+                room[key] = t
         return len(room)
 
 
@@ -2974,11 +3224,15 @@ def push_live(req, lid):
 def watch_live(req, lid):
     row = _live_row(req, lid)
     q, uid = req.query, _uid(req)
+    _limit(f"watch:{req.user['id'] if req.user else req.ip}", 180, 60, "Actualisation trop fréquente.")
     live, listeners = _is_live(row), _listeners(row["id"])
     viewer = _str(q.get("viewer"), 40)
     if live and row["user_id"] != uid and (req.user or viewer):
-        key = f"u{uid}" if req.user else "a" + hashlib.sha256(f"{req.ip}|{viewer}".encode()).hexdigest()[:16]
-        listeners = _listeners(row["id"], key)
+        if req.user:
+            listeners = _listeners(row["id"], f"u{uid}")
+        else:
+            source = "a" + hashlib.sha256(req.ip.encode()).hexdigest()[:12]
+            listeners = _listeners(row["id"], f"{source}:{hashlib.sha256(viewer.encode()).hexdigest()[:8]}", per_source=3)
         if listeners > row["peak"]:
             req.conn.execute("UPDATE lives SET peak = MAX(peak, ?) WHERE id = ?", (listeners, row["id"]))
     data = _live_public(row, listeners) | {"mine": row["user_id"] == uid, "now": (_json_or_none(row["now_text"]) if live else None),

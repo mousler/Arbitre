@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -55,6 +56,20 @@ PROMPT = (
     "ne résume pas, n'ajoute ni introduction ni commentaire. "
     "Retourne uniquement le texte transcrit (chaîne vide s'il n'y a pas de parole)."
 )
+YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
+
+
+def youtube_url(raw):
+    """Lien YouTube canonique, ou « » : seul YouTube est téléchargé, jamais une adresse arbitraire (SSRF)"""
+    try:
+        parts = urllib.parse.urlsplit(str(raw or "").strip())
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or host not in YOUTUBE_HOSTS:
+        return ""
+    match = re.search(r"(?:v=|youtu\.be/|shorts/|embed/|live/)([\w-]{11})", parts.geturl())
+    return f"https://www.youtube.com/watch?v={match.group(1)}" if match else ""
 
 
 def get_ffmpeg():
@@ -325,8 +340,9 @@ def transcribe_youtube(url, engine, keys, log=print):
     """Télécharge l'audio YouTube, le découpe et retourne la transcription complète (log : suivi de progression)"""
     if engine not in ENGINES:
         raise RuntimeError(f"Moteur inconnu: {engine}")
+    url = youtube_url(url)
     if not url:
-        raise RuntimeError("URL requise")
+        raise RuntimeError("Lien YouTube invalide : seules les vidéos YouTube sont acceptées.")
     if engine == "gemini" and not keys.get("gemini"):
         raise RuntimeError("Clé API Gemini requise")
     if engine.startswith("groq") and not keys.get("groq"):
@@ -430,13 +446,39 @@ def transcribe_youtube(url, engine, keys, log=print):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    """Serveur de démonstration (port 8765) : une seule page servie, aucun autre fichier du dossier (.env, data/, sources)"""
+    PAGES = {"/": "/transcript.html", "/transcript.html": "/transcript.html"}
+
+    def do_GET(self):
+        page = self.PAGES.get(urllib.parse.urlsplit(self.path).path)
+        if not page:
+            self.send_error(404)
+            return
+        self.path = page
+        super().do_GET()
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        super().end_headers()
+
     def do_POST(self):
         if self.path != "/api/transcribe":
             self.send_error(404)
             return
 
         try:
+            origin = self.headers.get("Origin")
+            if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+                raise ValueError("Origine refusée.")
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                raise ValueError("Requête refusée.")
             length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 64 * 1024:
+                raise ValueError("Requête vide ou trop volumineuse.")
             payload = json.loads(self.rfile.read(length))
 
             result = transcribe_youtube(
@@ -452,7 +494,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_response(200)
         except Exception as e:
             print(f"[ERR] {e}")
-            body = json.dumps({"error": str(e)}, ensure_ascii=False).encode()
+            body = json.dumps({"error": str(e)[:300]}, ensure_ascii=False).encode()
             self.send_response(500)
 
         self.send_header("Content-Type", "application/json; charset=utf-8")

@@ -3,6 +3,8 @@
 (arguments, sophismes, erreurs logiques, faits à vérifier) → fusion par orateur et synthèse finale."""
 
 import json
+import base64
+import hashlib
 import hmac
 import ipaddress
 import os
@@ -26,6 +28,25 @@ import transcript_server as ts  # téléchargement/transcription, TLS via proxy 
 import community  # comptes, communauté, défis, administration (SQLite dans data/)
 
 STATIC_RE = re.compile(r"^/[\w-]+\.html$")  # seules les pages HTML racine sont servies (jamais data/, .py, .venv…)
+STATIC_PAGES = {"/arbitre.html", "/simulation.html"}  # transcript.html appartient au serveur de démonstration (8765)
+# Le script inline de chaque page est autorisé par son empreinte : un script injecté ne s'exécute pas.
+CSP_BASE = ("default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: data:; "
+            "font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'")
+CSP_PAGES = {
+    "/arbitre.html": "script-src 'self' blob: https://www.youtube.com https://s.ytimg.com {hashes}; "
+                     "frame-src https://www.youtube.com https://www.youtube-nocookie.com; form-action 'self'",
+    "/simulation.html": "script-src 'self' {hashes}; frame-src 'none'; form-action 'self' http://127.0.0.1:*",
+}
+PERMISSIONS_POLICY = "camera=(), geolocation=(), payment=(), usb=(), microphone=(self), autoplay=(self)"
+INLINE_SCRIPT_RE = re.compile(rb"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S | re.I)
+_csp_cache = {}
+MAX_RUNNING_JOBS = 4      # analyses exécutées en même temps ; les suivantes attendent leur tour
+MAX_ACTIVE_JOBS = 40      # analyses en cours ou en attente sur tout le serveur
+MAX_JOBS_PER_OWNER = 3    # par compte (ou adresse, sans compte)
+if os.environ.get("RHETORA_SIMULATION_MODE") == "1":  # analyses déterministes instantanées : la sandbox teste jusqu'à 100 acteurs simultanés
+    MAX_RUNNING_JOBS, MAX_ACTIVE_JOBS = 16, 200
+EXPLORE_CACHE_MAX = 300
+PATH_RE = re.compile(r"(?:[A-Za-z]:\\|/(?:tmp|var|home|Users|usr|private)/)[^\s'\"]*")
 
 PORT = int(os.environ.get("ARBITRE_PORT", "8766"))
 SIMULATION_MODE = os.environ.get("RHETORA_SIMULATION_MODE") == "1"
@@ -635,9 +656,9 @@ def read_settings(payload, with_transcription, ctx, label):
 
 def youtube_work(payload, ctx):
     """Tâche : YouTube → transcription → analyse"""
-    url = str(payload.get("url") or "").strip()
-    if not re.match(r"^https?://", url):
-        raise ValueError("URL YouTube invalide.")
+    url = ts.youtube_url(payload.get("url"))
+    if not url:
+        raise ValueError("Lien YouTube invalide : seules les vidéos YouTube peuvent être analysées.")
     cfg = read_settings(payload, True, ctx, "youtube")
 
     def work(log):
@@ -753,16 +774,38 @@ def hook_test(cfg):
 
 jobs = {}
 jobs_lock = threading.Lock()
+job_slots = threading.BoundedSemaphore(MAX_RUNNING_JOBS)
 
 
 class JobCanceled(Exception):
     pass
 
 
-def start_job(work):
-    """Exécute work(log) en arrière-plan ; la progression est consultable via GET /api/jobs/<id>"""
+def public_error(error):
+    """Message d'erreur montré à l'utilisateur : première ligne, sans chemins de fichiers internes"""
+    text = str(error).strip().splitlines()[0] if str(error).strip() else "Erreur inattendue."
+    return PATH_RE.sub("[fichier]", text)[:300]
+
+
+def job_owner(headers, ip):
+    """Propriétaire d'une tâche : le compte connecté, sinon l'adresse (si l'IA est ouverte sans compte)"""
+    uid = community.session_user_id(headers)
+    return f"user:{uid}" if uid else f"ip:{ip}"
+
+
+def ensure_job_capacity(owner):
+    with jobs_lock:
+        active = [j for j in jobs.values() if j["status"] in ("queued", "running")]
+    if len(active) >= MAX_ACTIVE_JOBS:
+        raise community.ApiError(503, "Le serveur traite déjà beaucoup d’analyses : réessayez dans quelques minutes.")
+    if sum(j["owner"] == owner for j in active) >= MAX_JOBS_PER_OWNER:
+        raise community.ApiError(429, f"{MAX_JOBS_PER_OWNER} analyses sont déjà en cours pour vous : attendez qu’une se termine.")
+
+
+def start_job(work, owner):
+    """Exécute work(log) en arrière-plan ; la progression n'est consultable que par son propriétaire (GET /api/jobs/<id>)"""
     job_id = uuid.uuid4().hex
-    job = {"status": "running", "log": [], "result": None, "error": None, "created": time.time(), "cancel": False}
+    job = {"status": "queued", "log": [], "result": None, "error": None, "created": time.time(), "cancel": False, "owner": owner}
 
     def log(message):
         if job["cancel"]:
@@ -775,6 +818,18 @@ def start_job(work):
 
     def runner():
         try:
+            if not job_slots.acquire(blocking=False):
+                log(f"En attente d’une place : {MAX_RUNNING_JOBS} analyses sont déjà en cours sur le serveur…")
+                while not job_slots.acquire(timeout=1):
+                    if job["cancel"]:
+                        raise JobCanceled("Analyse annulée.")
+        except JobCanceled:
+            with jobs_lock:
+                job.update(status="canceled", error="Analyse annulée.")
+            return
+        try:
+            with jobs_lock:
+                job["status"] = "running"
             result = work(log)
             log("✓ Terminé")
             with jobs_lock:
@@ -786,9 +841,12 @@ def start_job(work):
                     job.update(status="canceled", error="Analyse annulée.")
                 return
             traceback.print_exc()
-            log(f"✗ {e}")
+            message = public_error(e)
             with jobs_lock:
-                job.update(status="error", error=str(e))
+                job["log"].append(f"✗ {message}")
+                job.update(status="error", error=message)
+        finally:
+            job_slots.release()
 
     with jobs_lock:
         for old in [k for k, j in jobs.items() if time.time() - j["created"] > JOB_TTL]:
@@ -796,6 +854,12 @@ def start_job(work):
         jobs[job_id] = job
     threading.Thread(target=runner, daemon=True).start()
     return job_id
+
+
+def find_job(job_id, owner):
+    """Tâche de ce propriétaire, sinon None : l'identifiant seul ne suffit pas à lire ou annuler l'analyse d'autrui"""
+    job = jobs.get(job_id)
+    return job if job and hmac.compare_digest(job["owner"], owner) else None
 
 explore_cache = {}
 explore_lock = threading.Lock()
@@ -830,7 +894,7 @@ def explore_page(query, sort, yt_duration, page):
             "url": f"https://www.youtube.com/watch?v={vid}",
             "title": str(e.get("title") or ""),
             "channel": str(e.get("channel") or e.get("uploader") or ""),
-            "channelUrl": str(e.get("channel_url") or e.get("uploader_url") or ""),
+            "channelUrl": channel_url(e.get("channel_url") or e.get("uploader_url")),
             "duration": e.get("duration"),
             "views": e.get("view_count"),
             "description": str(e.get("description") or "")[:300],
@@ -840,8 +904,16 @@ def explore_page(query, sort, yt_duration, page):
     with explore_lock:
         for old in [k for k, (t, _) in explore_cache.items() if time.time() - t > EXPLORE_TTL]:
             del explore_cache[old]
+        while len(explore_cache) >= EXPLORE_CACHE_MAX:
+            del explore_cache[min(explore_cache, key=lambda k: explore_cache[k][0])]
         explore_cache[key] = (time.time(), result)
     return result
+
+
+def channel_url(value):
+    """Lien de chaîne affiché tel quel dans la page : uniquement https://www.youtube.com/… (jamais javascript: ni autre site)"""
+    url = str(value or "")
+    return url if re.fullmatch(r"https://(www\.)?youtube\.com/[\w@%./-]{1,200}", url) else ""
 
 
 def explore_youtube(params):
@@ -942,6 +1014,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "same-origin")
+        page = self.__dict__.pop("html_page", None)
+        if page:
+            self.send_header("Content-Security-Policy", page_csp(page))
+            self.send_header("Permissions-Policy", PERMISSIONS_POLICY)
         super().end_headers()
 
     def community_api(self, method):
@@ -984,9 +1060,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return False
-        if not STATIC_RE.match(path):
+        if not STATIC_RE.match(path) or path not in STATIC_PAGES:
             self.send_error(404)
             return False
+        self.html_page = path
         return True
 
     def do_HEAD(self):
@@ -1032,21 +1109,28 @@ class Handler(SimpleHTTPRequestHandler):
         api = {"/api/explore": explore_youtube, "/api/oembed": youtube_oembed}.get(parsed.path)
         if api:
             try:
+                limit = (30, "explore") if parsed.path == "/api/explore" else (120, "oembed")
+                community._limit(f"yt-{limit[1]}:{self.client_address[0]}", limit[0], 60, "Trop de recherches : patientez un instant.")
                 self.send_json(200, api(urllib.parse.parse_qs(parsed.query)))
+            except community.ApiError as e:
+                self.send_json(e.status, {"error": str(e)})
             except ValueError as e:
                 self.send_json(400, {"error": str(e)})
-            except Exception as e:
+            except Exception:
                 traceback.print_exc()
-                self.send_json(502, {"error": f"Requête YouTube impossible : {e}"})
+                self.send_json(502, {"error": "Requête YouTube impossible pour le moment : réessayez plus tard."})
             return
         if not self.path.startswith("/api/jobs/"):
             if self.static_allowed():
                 super().do_GET()
             return
+        owner = job_owner(self.headers, self.client_address[0])
         with jobs_lock:
-            job = jobs.get(self.path[len("/api/jobs/"):])
+            job = find_job(self.path[len("/api/jobs/"):], owner)
             snapshot = job and {k: job[k] for k in ("status", "result", "error")} | {"log": job["log"][-20:]}
         if snapshot:
+            if snapshot["status"] == "queued":
+                snapshot["status"] = "running"  # côté navigateur, une tâche en attente se suit comme une tâche en cours
             self.send_json(200, snapshot)
         else:
             self.send_json(404, {"error": "Tâche inconnue ou expirée (serveur redémarré ?)."})
@@ -1083,7 +1167,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(400, {"error": str(e)})
             except Exception as e:
                 traceback.print_exc()
-                self.send_json(502, {"error": str(e)[:300]})
+                self.send_json(502, {"error": public_error(e)})
             return
         make_work = self.routes.get(self.path)
         if not make_work:
@@ -1092,6 +1176,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if self.headers.get("X-Rhetora") != "1":
                 raise community.ApiError(403, "Requête refusée.")
+            owner = job_owner(self.headers, ctx[1])
+            ensure_job_capacity(owner)
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 <= length <= 20 * 1024 * 1024:
                 raise ValueError("Requête trop volumineuse.")
@@ -1105,7 +1191,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError as e:
             self.send_json(400, {"error": str(e)})
             return
-        self.send_json(202, {"jobId": start_job(work)})
+        self.send_json(202, {"jobId": start_job(work, owner)})
 
     def simulation_is_local(self):
         try:
@@ -1151,9 +1237,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def send_simulation_report(self):
         state = self.simulation_state()
-        report_path = os.path.abspath(state.get("report_path") or "")
+        report_path = os.path.realpath(state.get("report_path") or "")
         try:
-            inside_results = os.path.commonpath((SIMULATION_DIR, report_path)) == SIMULATION_DIR
+            inside_results = os.path.commonpath((os.path.realpath(SIMULATION_DIR), report_path)) == os.path.realpath(SIMULATION_DIR)
         except ValueError:
             inside_results = False
         if not inside_results or not os.path.isfile(report_path):
@@ -1383,6 +1469,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if self.headers.get("X-Rhetora") != "1":
                 raise community.ApiError(403, "Requête refusée.")
+            owner = job_owner(self.headers, ctx[1])
+            ensure_job_capacity(owner)
             length = int(self.headers.get("Content-Length") or 0)
             if not 0 < length <= FILE_MAX_BYTES:
                 raise ValueError(f"Fichier vide ou trop volumineux ({FILE_MAX_BYTES // 1024 // 1024} Mo maximum).")
@@ -1406,7 +1494,7 @@ class Handler(SimpleHTTPRequestHandler):
                 os.remove(path)
             self.send_json(getattr(e, "status", 400), {"error": str(e)})
             return
-        self.send_json(202, {"jobId": start_job(file_work(path, title, cfg))})
+        self.send_json(202, {"jobId": start_job(file_work(path, title, cfg), owner)})
 
     def do_DELETE(self):
         if self.community_api("DELETE"):
@@ -1414,9 +1502,13 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.path.startswith("/api/jobs/"):
             self.send_error(404)
             return
+        if self.headers.get("X-Rhetora") != "1":
+            self.send_json(403, {"error": "Requête refusée."})
+            return
+        owner = job_owner(self.headers, self.client_address[0])
         with jobs_lock:
-            job = jobs.get(self.path[len("/api/jobs/"):])
-            if job and job["status"] == "running":
+            job = find_job(self.path[len("/api/jobs/"):], owner)
+            if job and job["status"] in ("queued", "running"):
                 job["cancel"] = True
         self.send_json(200 if job else 404, {"canceled": bool(job)})
 
@@ -1427,6 +1519,24 @@ class Handler(SimpleHTTPRequestHandler):
 class RhetoraHTTPServer(ThreadingHTTPServer):
     # La file par défaut (5) refuse des connexions lors des pics de requêtes simultanées.
     request_queue_size = 256
+
+
+def page_csp(page):
+    """CSP de la page, avec l'empreinte SHA-256 de ses scripts inline (recalculée si le fichier change)"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), page.lstrip("/"))
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return CSP_BASE
+    cached = _csp_cache.get(page)
+    if not cached or cached[0] != mtime:
+        with open(path, "rb") as f:
+            # Le navigateur convertit les fins de ligne Windows avant de calculer l'empreinte du script.
+            hashes = " ".join("'sha256-%s'" % base64.b64encode(hashlib.sha256(s.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).digest()).decode()
+                              for s in INLINE_SCRIPT_RE.findall(f.read()))
+        policy = CSP_PAGES.get(page, "script-src 'self'").format(hashes=hashes)
+        cached = _csp_cache[page] = (mtime, f"{CSP_BASE}; {policy}")
+    return cached[1]
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -1440,4 +1550,7 @@ if __name__ == "__main__":
         lan = RhetoraHTTPServer((host, PORT), Handler)
         threading.Thread(target=lan.serve_forever, daemon=True).start()
         print(f"Réseau local : http://{host}:{PORT}/arbitre.html")
+        if not community.SECURE_COOKIE:
+            print("⚠ Accès réseau en HTTP : les sessions circulent en clair. Placez un proxy HTTPS devant le serveur "
+                  "et définissez RHETORA_SECURE_COOKIE=1.")
     RhetoraHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
