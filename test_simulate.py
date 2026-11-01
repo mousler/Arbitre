@@ -12,6 +12,26 @@ import arbitre_server
 import simulate
 
 
+class SimulatedClientAddressTests(unittest.TestCase):
+    def test_sandbox_accepts_loopback_simulated_addresses(self):
+        self.assertEqual(
+            arbitre_server.effective_client_ip("127.0.0.1", {"X-Rhetora-Simulated-IP": "127.10.0.2"}, True),
+            "127.10.0.2",
+        )
+
+    def test_production_ignores_simulated_address_header(self):
+        self.assertEqual(
+            arbitre_server.effective_client_ip("127.0.0.1", {"X-Rhetora-Simulated-IP": "127.10.0.2"}),
+            "127.0.0.1",
+        )
+
+    def test_sandbox_rejects_non_loopback_simulated_addresses(self):
+        self.assertEqual(
+            arbitre_server.effective_client_ip("127.0.0.1", {"X-Rhetora-Simulated-IP": "192.0.2.1"}, True),
+            "127.0.0.1",
+        )
+
+
 class MetricsTests(unittest.TestCase):
     def test_expected_denial_and_unexpected_success(self):
         metrics = simulate.Metrics()

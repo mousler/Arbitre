@@ -3,9 +3,7 @@
 
 import argparse
 import concurrent.futures
-import functools
 import heapq
-import http.client
 import http.cookiejar
 import importlib
 import itertools
@@ -404,27 +402,18 @@ def loopback_address(index):
     return f"127.{10 + number // 62500}.{number // 250 % 250 + 1}.{number % 250 + 1}"
 
 
-class SourceAddressHandler(urllib.request.HTTPHandler):
-    def __init__(self, source_ip):
-        super().__init__()
-        self.source_ip = source_ip
-
-    def http_open(self, request):
-        return self.do_open(functools.partial(http.client.HTTPConnection, source_address=(self.source_ip, 0)), request)
-
-
 class ApiClient:
     def __init__(self, base_url, source_ip=None):
         self.base_url = base_url
         self.source_ip = source_ip
         self.cookies = http.cookiejar.CookieJar()
         handlers = [urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(self.cookies)]
-        if source_ip:
-            handlers.append(SourceAddressHandler(source_ip))
         self.opener = urllib.request.build_opener(*handlers)
 
     def request(self, method, path, payload=None, header_overrides=None):
         headers = {"Accept": "application/json", "User-Agent": "RhetoraSimulation/1.0"}
+        if self.source_ip:
+            headers["X-Rhetora-Simulated-IP"] = self.source_ip
         body = None
         if payload is not None:
             headers["Content-Type"] = "application/json"

@@ -48,6 +48,18 @@ if os.environ.get("RHETORA_SIMULATION_MODE") == "1":  # analyses déterministes 
 EXPLORE_CACHE_MAX = 300
 PATH_RE = re.compile(r"(?:[A-Za-z]:\\|/(?:tmp|var|home|Users|usr|private)/)[^\s'\"]*")
 
+
+def effective_client_ip(remote_ip, headers, simulation_mode=False):
+    if simulation_mode:
+        try:
+            remote = ipaddress.ip_address(remote_ip)
+            simulated = ipaddress.ip_address(headers.get("X-Rhetora-Simulated-IP", ""))
+            if remote.is_loopback and simulated.is_loopback:
+                return str(simulated)
+        except ValueError:
+            pass
+    return remote_ip
+
 PORT = int(os.environ.get("ARBITRE_PORT", "8766"))
 SIMULATION_MODE = os.environ.get("RHETORA_SIMULATION_MODE") == "1"
 SIMULATION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation-results")
@@ -1033,7 +1045,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json(413, {"error": "Requête trop volumineuse."})
             return True
         body = self.rfile.read(length) if length else b""
-        status, data, headers = community.handle(method, parsed.path, parsed.query, self.headers, body, self.client_address[0])
+        client_ip = effective_client_ip(self.client_address[0], self.headers, SIMULATION_MODE)
+        status, data, headers = community.handle(method, parsed.path, parsed.query, self.headers, body, client_ip)
         if isinstance(data, community.Binary):  # image : identifiant aléatoire immuable, servie sans exécution possible
             self.send_response(status)
             self.send_header("Content-Type", data.mime)
@@ -1110,7 +1123,8 @@ class Handler(SimpleHTTPRequestHandler):
         if api:
             try:
                 limit = (30, "explore") if parsed.path == "/api/explore" else (120, "oembed")
-                community._limit(f"yt-{limit[1]}:{self.client_address[0]}", limit[0], 60, "Trop de recherches : patientez un instant.")
+                client_ip = effective_client_ip(self.client_address[0], self.headers, SIMULATION_MODE)
+                community._limit(f"yt-{limit[1]}:{client_ip}", limit[0], 60, "Trop de recherches : patientez un instant.")
                 self.send_json(200, api(urllib.parse.parse_qs(parsed.query)))
             except community.ApiError as e:
                 self.send_json(e.status, {"error": str(e)})
@@ -1124,7 +1138,8 @@ class Handler(SimpleHTTPRequestHandler):
             if self.static_allowed():
                 super().do_GET()
             return
-        owner = job_owner(self.headers, self.client_address[0])
+        client_ip = effective_client_ip(self.client_address[0], self.headers, SIMULATION_MODE)
+        owner = job_owner(self.headers, client_ip)
         with jobs_lock:
             job = find_job(self.path[len("/api/jobs/"):], owner)
             snapshot = job and {k: job[k] for k in ("status", "result", "error")} | {"log": job["log"][-20:]}
@@ -1148,7 +1163,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if self.community_api("POST"):
             return
-        ctx = (self.headers, self.client_address[0])
+        client_ip = effective_client_ip(self.client_address[0], self.headers, SIMULATION_MODE)
+        ctx = (self.headers, client_ip)
         if self.path == "/api/analyze-file":
             self.analyze_file(ctx)
             return
@@ -1321,7 +1337,8 @@ class Handler(SimpleHTTPRequestHandler):
             if not row:
                 self.send_json(404, {"error": "Compte simulé introuvable."})
                 return
-            req = community.Req(conn, "", self.headers, {}, self.client_address[0])
+            client_ip = effective_client_ip(self.client_address[0], self.headers, SIMULATION_MODE)
+            req = community.Req(conn, "", self.headers, {}, client_ip)
             community._start_session(req, row["id"])
         self.send_response(303)
         for header, value in req.out_headers:
@@ -1505,7 +1522,8 @@ class Handler(SimpleHTTPRequestHandler):
         if self.headers.get("X-Rhetora") != "1":
             self.send_json(403, {"error": "Requête refusée."})
             return
-        owner = job_owner(self.headers, self.client_address[0])
+        client_ip = effective_client_ip(self.client_address[0], self.headers, SIMULATION_MODE)
+        owner = job_owner(self.headers, client_ip)
         with jobs_lock:
             job = find_job(self.path[len("/api/jobs/"):], owner)
             if job and job["status"] in ("queued", "running"):
