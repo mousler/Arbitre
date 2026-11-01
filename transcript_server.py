@@ -5,6 +5,7 @@ import base64
 import glob
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -336,11 +337,24 @@ def transcribe_segment(engine, keys, path, index, total, lang):
     return text.strip()
 
 
+def bundled_ytdlp_name(system=None, machine=None):
+    system = system or platform.system()
+    machine = (machine or platform.machine()).lower()
+    if system == "Darwin":
+        return "yt-dlp_macos"
+    if system == "Windows":
+        return "yt-dlp_arm64.exe" if machine in ("arm64", "aarch64") else "yt-dlp.exe"
+    if system == "Linux":
+        return "yt-dlp_linux_aarch64" if machine in ("arm64", "aarch64") else "yt-dlp_linux"
+    return None
+
+
 def ytdlp_binary():
     configured = os.environ.get("YTDLP_BINARY")
-    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", "yt-dlp_macos")
-    for path in (configured, bundled, shutil.which("yt-dlp")):
-        if path and os.path.isfile(path) and os.access(path, os.X_OK):
+    name = bundled_ytdlp_name()
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", name) if name else None
+    for path in (configured, bundled, shutil.which("yt-dlp"), shutil.which("yt-dlp.exe")):
+        if path and os.path.isfile(path) and (os.name == "nt" or os.access(path, os.X_OK)):
             return path
     return None
 

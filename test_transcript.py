@@ -16,5 +16,14 @@ class DownloadSpeedSettingsTests(unittest.TestCase):
         self.assertIn("dashy", ts.YDL_DOWNLOAD["extractor_args"]["youtube"]["formats"])
 
 
+class YtDlpPlatformBinaryTests(unittest.TestCase):
+    def test_selects_binary_for_supported_platforms(self):
+        self.assertEqual(ts.bundled_ytdlp_name("Darwin", "arm64"), "yt-dlp_macos")
+        self.assertEqual(ts.bundled_ytdlp_name("Windows", "AMD64"), "yt-dlp.exe")
+        self.assertEqual(ts.bundled_ytdlp_name("Windows", "ARM64"), "yt-dlp_arm64.exe")
+        self.assertEqual(ts.bundled_ytdlp_name("Linux", "x86_64"), "yt-dlp_linux")
+        self.assertEqual(ts.bundled_ytdlp_name("Linux", "aarch64"), "yt-dlp_linux_aarch64")
+
+
 if __name__ == "__main__":
     unittest.main()

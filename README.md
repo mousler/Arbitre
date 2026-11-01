@@ -53,7 +53,10 @@ sudo apt-get install ffmpeg
 # 3. Installer dépendances Python
 pip install yt-dlp
 
-# 4. Lancer le serveur
+# 4. Installer le binaire yt-dlp adapté à macOS ou Windows
+python install_ytdlp.py
+
+# 5. Lancer le serveur
 python arbitre_server.py
 ```
 
