@@ -1828,7 +1828,6 @@
         <button class="side-link" data-view="live" data-action="liveOpen"><i data-icon="mic" data-size="22"></i>Débat en direct<span class="side-rec" id="liveSideDot" hidden><i></i>REC</span></button>
         <button class="side-link" data-view="queue"><i data-icon="layers" data-size="22"></i>Analyses<span class="side-badge" id="queueBadge" hidden></span></button>
         <button class="side-link" data-view="community"><i data-icon="chat" data-size="22"></i>Communauté<span class="side-live" id="liveNavDot" title="Des débats sont diffusés en direct" hidden>LIVE</span><span class="side-dot" id="dailyDot" title="Défi du jour disponible" hidden></span></button>
-        <button class="side-link" data-view="support"><i data-icon="mail" data-size="22"></i>Aide et support</button>
         <button class="side-link" data-view="overview" id="currentLink" hidden><i data-icon="tree" data-size="22"></i>Débat en cours</button>
         <button class="side-link" data-view="admin" id="adminLink" hidden><i data-icon="shield" data-size="22"></i>Administration<span class="side-badge" id="adminBadge" hidden></span></button>
       </nav>
@@ -5318,9 +5317,9 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
         : `<button class="acct-btn" data-action="acctMenu" aria-haspopup="menu">${uav(u.username, u.avatar)}<span><b>${escapeHtml(u.username)}</b><small>Niv. ${u.level} · ${escapeHtml(u.title)}</small></span>${u.streak ? `<span class="acct-streak" title="Série de défis du jour">${icon('fire', 14)}${u.streak}</span>` : ''}</button>
         <div class="menu acct-menu" id="acctMenu" hidden>
           <button data-action="openProfile" data-name="${escapeHtml(u.username)}">${icon('user')}Mon profil</button>
+          <button data-view="support">${icon('mail')}Aide et support</button>
           <button data-view="community">${icon('chat')}Communauté</button>
           <button data-action="dmOpen">${icon('mail')}Messages${u.dm_unread ? ` <span class="cn-count">${u.dm_unread}</span>` : ''}</button>
-          <button data-view="support">${icon('mail')}Aide et support</button>
           ${isMod() ? `<button data-view="admin">${icon('shield')}Administration</button>` : ''}
           <hr><button data-action="logout">${icon('logout')}Se déconnecter</button>
         </div>`;
