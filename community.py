@@ -188,8 +188,15 @@ CREATE TABLE IF NOT EXISTS dm_messages (id INTEGER PRIMARY KEY, sender_id INTEGE
   read_at INTEGER, hidden_s INTEGER NOT NULL DEFAULT 0, hidden_r INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS dm_blocks (blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL, PRIMARY KEY (blocker_id, blocked_id));
+CREATE TABLE IF NOT EXISTS support_tickets (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject TEXT NOT NULL, category TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS support_messages (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, body TEXT NOT NULL, created_at INTEGER NOT NULL,
+    read_user_at INTEGER, read_staff_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_dm_pair ON dm_messages(sender_id, recipient_id, id);
 CREATE INDEX IF NOT EXISTS idx_dm_inbox ON dm_messages(recipient_id, read_at);
+CREATE INDEX IF NOT EXISTS idx_support_ticket_updated ON support_tickets(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_support_messages_ticket ON support_messages(ticket_id, id);
 CREATE INDEX IF NOT EXISTS idx_trash_owner ON trash(owner_id);
 CREATE INDEX IF NOT EXISTS idx_lives_status ON lives(status);
 CREATE INDEX IF NOT EXISTS idx_live_chat ON live_chat(live_id, id);
@@ -1953,6 +1960,147 @@ def dm_block(req, username):
         req.conn.execute("DELETE FROM dm_blocks WHERE blocker_id = ? AND blocked_id = ?", (user["id"], peer["id"]))
         log_activity(req.conn, user["id"], "prefs", f"Messages de {peer['username']} débloqués", req.ip)
     return _dm_state(req, user, peer)
+
+
+def _support_ticket(req, ticket_id, staff=False):
+    row = req.conn.execute("SELECT * FROM support_tickets WHERE id = ?", (int(ticket_id),)).fetchone()
+    if not row or (not staff and row["user_id"] != req.user["id"]):
+        raise ApiError(404, "Demande introuvable.")
+    return row
+
+
+def _support_summary(conn, ticket, staff=False):
+    last = conn.execute("SELECT body, created_at, sender_id FROM support_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT 1",
+                        (ticket["id"],)).fetchone()
+    unread_column = "read_staff_at" if staff else "read_user_at"
+    unread = conn.execute(f"SELECT COUNT(*) FROM support_messages WHERE ticket_id = ? AND {unread_column} IS NULL",
+                          (ticket["id"],)).fetchone()[0]
+    return dict(ticket) | {"last_message": dict(last) if last else None, "unread": unread}
+
+
+def _support_thread(conn, ticket):
+    owner = conn.execute("SELECT id, username, email FROM users WHERE id = ?", (ticket["user_id"],)).fetchone()
+    messages = conn.execute("""SELECT m.id, m.body, m.created_at, m.sender_id, u.username, u.role
+                                FROM support_messages m JOIN users u ON u.id = m.sender_id
+                                WHERE m.ticket_id = ? ORDER BY m.id""", (ticket["id"],)).fetchall()
+    return {"ticket": dict(ticket) | {"user": dict(owner)}, "messages": [dict(m) for m in messages]}
+
+
+@route("GET", "/api/me/support")
+def support_list(req):
+    user = req.need()
+    tickets = req.conn.execute("SELECT * FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100",
+                               (user["id"],)).fetchall()
+    return {"tickets": [_support_summary(req.conn, ticket) for ticket in tickets]}
+
+
+@route("POST", "/api/me/support")
+def support_create(req):
+    user = req.need()
+    subject = _oneline(_str(req.body.get("subject"), 151))
+    category = req.body.get("category")
+    body = _str(req.body.get("body"), 5001).strip()
+    if category not in ("question", "bug", "suggestion", "other"):
+        raise ApiError(400, "Choisissez une catégorie valide.")
+    if not subject or len(subject) > 150 or not body or len(body) > 5000:
+        raise ApiError(400, "Objet et message requis (150 et 5000 caractères maximum).")
+    _limit(f"support:{user['id']}", 10, 3600, "Trop de demandes : réessayez plus tard.")
+    stamp = now()
+    cursor = req.conn.execute("INSERT INTO support_tickets (user_id, subject, category, created_at, updated_at) VALUES (?,?,?,?,?)",
+                              (user["id"], subject, category, stamp, stamp))
+    ticket_id = cursor.lastrowid
+    req.conn.execute("INSERT INTO support_messages (ticket_id, sender_id, body, created_at, read_user_at) VALUES (?,?,?,?,?)",
+                      (ticket_id, user["id"], body, stamp, stamp))
+    for staff in req.conn.execute("SELECT id FROM users WHERE role IN ('admin', 'moderator') AND status = 'active'"):
+        notify(req.conn, staff["id"], "support", user["id"], title="Nouvelle demande de support", body=subject)
+    req.audit("Demande de support créée", subject)
+    return {"ticket_id": ticket_id}
+
+
+@route("GET", r"/api/me/support/(\d+)")
+def support_thread(req, ticket_id):
+    req.need()
+    ticket = _support_ticket(req, ticket_id)
+    return _support_thread(req.conn, ticket)
+
+
+@route("POST", r"/api/me/support/(\d+)/read")
+def support_mark_read(req, ticket_id):
+    user = req.need()
+    ticket = _support_ticket(req, ticket_id)
+    req.conn.execute("UPDATE support_messages SET read_user_at = ? WHERE ticket_id = ? AND sender_id != ? AND read_user_at IS NULL",
+                     (now(), ticket["id"], user["id"]))
+    return {"ok": True}
+
+
+@route("POST", r"/api/me/support/(\d+)/messages")
+def support_reply(req, ticket_id):
+    user = req.need()
+    ticket = _support_ticket(req, ticket_id)
+    body = _str(req.body.get("body"), 5001).strip()
+    if not body or len(body) > 5000:
+        raise ApiError(400, "Le message est requis et ne peut pas dépasser 5000 caractères.")
+    _limit(f"support:{user['id']}", 30, 3600, "Trop de messages : réessayez plus tard.")
+    stamp = now()
+    req.conn.execute("INSERT INTO support_messages (ticket_id, sender_id, body, created_at, read_user_at) VALUES (?,?,?,?,?)",
+                     (ticket["id"], user["id"], body, stamp, stamp))
+    req.conn.execute("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?", (stamp, ticket["id"]))
+    for staff in req.conn.execute("SELECT id FROM users WHERE role IN ('admin', 'moderator') AND status = 'active'"):
+        notify(req.conn, staff["id"], "support", user["id"], title="Réponse à une demande de support", body=ticket["subject"])
+    return {"ok": True}
+
+
+@route("GET", "/api/admin/support")
+def admin_support_list(req):
+    req.need("moderator")
+    rows = req.conn.execute("""SELECT t.*, u.username, u.email FROM support_tickets t JOIN users u ON u.id = t.user_id
+                               ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'waiting' THEN 1 ELSE 2 END, t.updated_at DESC LIMIT 200""").fetchall()
+    return {"tickets": [_support_summary(req.conn, row, staff=True) | {"username": row["username"], "email": row["email"]}
+                        for row in rows]}
+
+
+@route("GET", r"/api/admin/support/(\d+)")
+def admin_support_thread(req, ticket_id):
+    req.need("moderator")
+    return _support_thread(req.conn, _support_ticket(req, ticket_id, staff=True))
+
+
+@route("POST", r"/api/admin/support/(\d+)/read")
+def admin_support_mark_read(req, ticket_id):
+    req.need("moderator")
+    ticket = _support_ticket(req, ticket_id, staff=True)
+    req.conn.execute("UPDATE support_messages SET read_staff_at = ? WHERE ticket_id = ? AND sender_id = ? AND read_staff_at IS NULL",
+                     (now(), ticket["id"], ticket["user_id"]))
+    return {"ok": True}
+
+
+@route("POST", r"/api/admin/support/(\d+)/messages")
+def admin_support_reply(req, ticket_id):
+    staff = req.need("moderator")
+    ticket = _support_ticket(req, ticket_id, staff=True)
+    body = _str(req.body.get("body"), 5001).strip()
+    if not body or len(body) > 5000:
+        raise ApiError(400, "Le message est requis et ne peut pas dépasser 5000 caractères.")
+    _limit(f"support:{staff['id']}", 100, 3600, "Trop de réponses : réessayez plus tard.")
+    stamp = now()
+    req.conn.execute("INSERT INTO support_messages (ticket_id, sender_id, body, created_at, read_staff_at) VALUES (?,?,?,?,?)",
+                     (ticket["id"], staff["id"], body, stamp, stamp))
+    req.conn.execute("UPDATE support_tickets SET status = 'waiting', updated_at = ? WHERE id = ?", (stamp, ticket["id"]))
+    notify(req.conn, ticket["user_id"], "support", staff["id"], title="Réponse de l’équipe Rhetora", body=ticket["subject"])
+    req.audit("Réponse support envoyée", f"Demande #{ticket['id']}")
+    return {"ok": True}
+
+
+@route("PATCH", r"/api/admin/support/(\d+)")
+def admin_support_status(req, ticket_id):
+    req.need("moderator")
+    ticket = _support_ticket(req, ticket_id, staff=True)
+    status = req.body.get("status")
+    if status not in ("open", "waiting", "closed"):
+        raise ApiError(400, "Statut invalide.")
+    req.conn.execute("UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?", (status, now(), ticket["id"]))
+    req.audit("Statut support modifié", f"Demande #{ticket['id']} : {status}")
+    return {"ok": True, "status": status}
 
 
 # ---------- Recherche de comptes et page Explorer de la communauté ----------

@@ -1768,6 +1768,41 @@
       .player { grid-template-columns: minmax(0, 1fr) auto; }
       .pl-right, .pl-progress { display: none; }
     }
+    .support-page { max-width: 1160px; margin: 0 auto; padding: 28px; }
+    .support-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+    .support-head h1 { margin: 0 0 6px; font-size: 24px; }
+    .support-head p { margin: 0; color: var(--muted); }
+    .support-grid { display: grid; grid-template-columns: minmax(230px, .72fr) minmax(0, 1.5fr); gap: 16px; }
+    .support-panel { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--elev-1); overflow: hidden; }
+    .support-panel-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .support-panel-head h2 { margin: 0; font-size: 16px; }
+    .support-list { display: grid; gap: 1px; max-height: 620px; overflow: auto; }
+    .support-ticket { width: 100%; text-align: left; padding: 13px 15px; border: 0; border-bottom: 1px solid var(--line); color: inherit; background: transparent; cursor: pointer; }
+    .support-ticket:hover, .support-ticket.active { background: var(--elev-2); }
+    .support-ticket-top, .support-message-head { display: flex; align-items: center; gap: 8px; }
+    .support-ticket-top strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .support-ticket small { display: block; margin-top: 5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .support-status { display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 99px; font-size: 11px; background: var(--elev-2); color: var(--muted); }
+    .support-status.open { color: var(--c-blue); }
+    .support-status.waiting { color: var(--c-yellow); }
+    .support-status.closed { color: var(--c-green); }
+    .support-thread { display: flex; flex-direction: column; min-height: 420px; }
+    .support-thread-body { display: grid; gap: 12px; padding: 16px; overflow: auto; max-height: 520px; }
+    .support-message { max-width: min(90%, 680px); padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--elev-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .support-message.mine { justify-self: end; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+    .support-message p { margin: 7px 0 0; }
+    .support-message-head { justify-content: space-between; color: var(--muted); font-size: 12px; }
+    .support-compose { display: grid; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--line); }
+    .support-compose textarea { min-height: 88px; resize: vertical; }
+    .support-empty { display: grid; place-content: center; gap: 8px; min-height: 280px; padding: 24px; text-align: center; color: var(--muted); }
+    .support-admin-actions { display: flex; gap: 8px; padding: 0 16px 14px; }
+    @media (max-width: 760px) {
+      .support-page { padding: 18px; }
+      .support-grid { grid-template-columns: 1fr; }
+      .support-list { max-height: 240px; }
+      .support-thread { min-height: 340px; }
+      .support-head { flex-wrap: wrap; }
+    }
     @media print {
       body { overflow: visible; background: #fff; }
       .side, .player, .topbar, .actionbar, .job, .drawer, .flags, .modal-backdrop, .glow, #homeView, #exploreView, #queueView, #liveView, #settingsView, #structureView, #boardView, #transcriptView { display: none !important; }
@@ -1793,6 +1828,7 @@
         <button class="side-link" data-view="live" data-action="liveOpen"><i data-icon="mic" data-size="22"></i>Débat en direct<span class="side-rec" id="liveSideDot" hidden><i></i>REC</span></button>
         <button class="side-link" data-view="queue"><i data-icon="layers" data-size="22"></i>Analyses<span class="side-badge" id="queueBadge" hidden></span></button>
         <button class="side-link" data-view="community"><i data-icon="chat" data-size="22"></i>Communauté<span class="side-live" id="liveNavDot" title="Des débats sont diffusés en direct" hidden>LIVE</span><span class="side-dot" id="dailyDot" title="Défi du jour disponible" hidden></span></button>
+        <button class="side-link" data-view="support"><i data-icon="mail" data-size="22"></i>Aide et support</button>
         <button class="side-link" data-view="overview" id="currentLink" hidden><i data-icon="tree" data-size="22"></i>Débat en cours</button>
         <button class="side-link" data-view="admin" id="adminLink" hidden><i data-icon="shield" data-size="22"></i>Administration<span class="side-badge" id="adminBadge" hidden></span></button>
       </nav>
@@ -2024,6 +2060,7 @@
       <section class="view" id="profileView" hidden><div class="content" id="profileBody"></div></section>
       <section class="view" id="liveroomView" hidden><div class="content" id="liveroomBody"></div></section>
       <section class="view" id="messagesView" hidden><div class="content dm-page" id="messagesBody"></div></section>
+      <section class="view" id="supportView" hidden><div class="content support-page" id="supportBody"></div></section>
 
       <!-- Administration : page dédiée -->
       <section class="view" id="adminView" hidden>
@@ -3351,12 +3388,12 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       $('liveView').hidden = view !== 'live';
       $('debateView').hidden = !isTab;
       $('settingsView').hidden = view !== 'settings';
-      for (const v of ['community', 'post', 'profile', 'admin', 'liveroom', 'messages']) $(`${v}View`).hidden = view !== v;
+      for (const v of ['community', 'post', 'profile', 'admin', 'liveroom', 'messages', 'support']) $(`${v}View`).hidden = view !== v;
       document.querySelectorAll('.subview').forEach(v => { v.hidden = v.id !== `${view}View`; });
       document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-      const sideView = COMM_VIEWS.includes(view) ? 'community' : view;
+      const sideView = COMM_VIEWS.includes(view) && view !== 'support' ? 'community' : view;
       document.querySelectorAll('.side-link').forEach(b => b.classList.toggle('active', b.dataset.view === sideView || (isTab && b.id === 'currentLink')));
-      const hues = { home: 248, explore: 285, queue: 265, live: 350, community: 25, post: 25, profile: 320, admin: 200, liveroom: 350, messages: 265 };
+      const hues = { home: 248, explore: 285, queue: 265, live: 350, community: 25, post: 25, profile: 320, admin: 200, liveroom: 350, messages: 265, support: 175 };
       $('main').style.setProperty('--h', isTab ? hueOf(state.debateId) : hues[view] ?? 215);
       $('searchBox').hidden = !(view === 'board' || view === 'transcript' || view === 'structure');
       renderCommNav();
@@ -3369,6 +3406,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       }
       if (view === 'community') { if (location.hash !== '#/communaute') history.replaceState(null, '', '#/communaute'); }
       else if (view === 'admin') { if (location.hash !== '#/admin') history.replaceState(null, '', '#/admin'); }
+      else if (view === 'support') { if (location.hash !== '#/support') history.replaceState(null, '', '#/support'); }
       else if (view === 'messages') { const h = dm.peer ? `#/messages/${encodeURIComponent(dm.peer)}` : '#/messages'; if (location.hash !== h) history.replaceState(null, '', h); }
       else if (view !== 'post' && view !== 'profile' && view !== 'liveroom' && location.hash.startsWith('#/')) history.replaceState(null, '', location.pathname + location.search);
       if (view === 'settings') renderSettings();
@@ -3379,6 +3417,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       if (view === 'admin') loadAdmin();
       if (view === 'liveroom') renderRoom(true);
       if (view === 'messages') showMessages();
+      if (view === 'support') showSupport();
       if (view === 'queue') renderQueue();
       if (view === 'live') { renderLive(); listDevices(); }
       if (view === 'explore') { renderExplore(); if (!explore.loaded) searchExplore(); }
@@ -4769,6 +4808,11 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       rename: () => { closeMenu(); const t = $('titleInput'); t.focus(); getSelection().selectAllChildren(t); },
       deleteDebate: () => { closeMenu(); deleteDebate(); },
       closeModals, closeDrawer,
+      supportNew: () => { supportUI.creating = true; supportUI.ticketId = 0; supportUI.error = ''; renderSupport(); },
+      supportSelect: btn => { supportUI.creating = false; loadSupport(+btn.dataset.id); },
+      supportRefresh: () => loadSupport(supportUI.ticketId),
+      supportAdminSelect: btn => { admin.support.ticketId = +btn.dataset.id; loadAdmin(); },
+      supportAdminStatus: btn => updateSupportStatus(+btn.dataset.id, btn.dataset.status),
       locate: btn => locateInTranscript(btn.dataset.locate),
       playInVideo: btn => playItemInVideo(btn.dataset.item),
       linkVideo,
@@ -5015,12 +5059,13 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
     let authReady = Promise.resolve();
     const comm = { tab: 'feed', sort: 'foryou', kind: '', q: '', page: 1, posts: [], hasMore: false, loading: false, loaded: false, error: '', daily: null, leaderboard: null, postId: 0, post: null, postError: '', replyTo: null, editing: null, profileName: '', profile: null, profileError: '', profileTab: 'posts', activity: null, followList: null,
       people: { q: '', users: [], page: 1, hasMore: false, loading: false, loaded: false, error: '', seq: 0 }, explore: null, exploreAt: 0 };
-    const admin = { tab: 'dashboard', loading: false, stats: null, users: [], usersQ: '', usersFilter: '', usersHasMore: false, reports: [], settings: null, clicks: {}, audit: [], auditQ: '', auditCat: '', auditCounts: null, auditHasMore: false, auditLoading: false, auditError: '', auditSeq: 0, auditTop: false, llm: null, llmTest: null, messages: [], msgDraft: { target: 'all', subject: '', body: '', email: false }, user: null, userTemp: '', userMsg: false, activity: null, trash: null, trashKind: '', trashQ: '' };
+    const admin = { tab: 'dashboard', loading: false, stats: null, users: [], usersQ: '', usersFilter: '', usersHasMore: false, reports: [], settings: null, clicks: {}, audit: [], auditQ: '', auditCat: '', auditCounts: null, auditHasMore: false, auditLoading: false, auditError: '', auditSeq: 0, auditTop: false, llm: null, llmTest: null, messages: [], msgDraft: { target: 'all', subject: '', body: '', email: false }, support: { tickets: [], ticketId: 0, thread: null }, user: null, userTemp: '', userMsg: false, activity: null, trash: null, trashKind: '', trashQ: '' };
+    const supportUI = { tickets: [], ticketId: 0, thread: null, creating: false, error: '' };
     const ROLE_LABEL = { user: 'Membre', moderator: 'Modérateur', admin: 'Administrateur' };
     const ROLE_RANK = { user: 0, moderator: 1, admin: 2 };
     const TONE_LABEL = { blue: 'Information', green: 'Bonne nouvelle', yellow: 'Attention', red: 'Urgent', purple: 'Événement', teal: 'Nouveauté' };
     const PLACEMENT_LABEL = { all: 'Partout', feed: 'Fil de la communauté', home: 'Accueil', post: 'Pages de publication' };
-    const ADMIN_TABS = [['dashboard', 'Tableau de bord', 'board', 'moderator'], ['reports', 'Signalements', 'flag', 'moderator'], ['users', 'Comptes', 'users', 'admin'], ['llm', 'Modèle IA', 'cpu', 'admin'], ['messages', 'Messages', 'mail', 'admin'], ['ads', 'Publicités', 'megaphone', 'admin'], ['settings', 'Paramètres', 'settings', 'admin'], ['trash', 'Corbeille', 'trash', 'admin'], ['audit', 'Journal', 'list', 'admin']];
+    const ADMIN_TABS = [['dashboard', 'Tableau de bord', 'board', 'moderator'], ['reports', 'Signalements', 'flag', 'moderator'], ['support', 'Support', 'mail', 'moderator'], ['users', 'Comptes', 'users', 'admin'], ['llm', 'Modèle IA', 'cpu', 'admin'], ['messages', 'Messages', 'mail', 'admin'], ['ads', 'Publicités', 'megaphone', 'admin'], ['settings', 'Paramètres', 'settings', 'admin'], ['trash', 'Corbeille', 'trash', 'admin'], ['audit', 'Journal', 'list', 'admin']];
     const isMod = () => (ROLE_RANK[auth.user?.role] || 0) >= 1;
     const isAdmin = () => auth.user?.role === 'admin';
     const fmtDay = ts => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(ts);
@@ -5275,6 +5320,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
           <button data-action="openProfile" data-name="${escapeHtml(u.username)}">${icon('user')}Mon profil</button>
           <button data-view="community">${icon('chat')}Communauté</button>
           <button data-action="dmOpen">${icon('mail')}Messages${u.dm_unread ? ` <span class="cn-count">${u.dm_unread}</span>` : ''}</button>
+          <button data-view="support">${icon('mail')}Aide et support</button>
           ${isMod() ? `<button data-view="admin">${icon('shield')}Administration</button>` : ''}
           <hr><button data-action="logout">${icon('logout')}Se déconnecter</button>
         </div>`;
@@ -5473,6 +5519,34 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
         try { await api('/api/me', { method: 'PATCH', body: { current_password: form.elements.curpw.value, new_password: next } }); form.reset(); notify('Mot de passe modifié.', 'success'); }
         catch (e) { fail(e); }
       },
+      async supportCreate(form) {
+        const submit = form.querySelector('[type="submit"]');
+        submit.disabled = true;
+        try {
+          const result = await api('/api/me/support', { method: 'POST', body: { subject: form.elements.subject.value, category: form.elements.category.value, body: form.elements.body.value } });
+          supportUI.creating = false; supportUI.ticketId = result.ticket_id;
+          await loadSupport(result.ticket_id); notify('Votre demande a été envoyée à l’équipe Rhetora.', 'success');
+        } catch (e) { fail(e); }
+        finally { submit.disabled = false; }
+      },
+      async supportReply(form) {
+        const id = +form.dataset.id, submit = form.querySelector('[type="submit"]');
+        submit.disabled = true;
+        try {
+          await api(`/api/me/support/${id}/messages`, { method: 'POST', body: { body: form.elements.body.value } });
+          await loadSupport(id);
+        } catch (e) { fail(e); }
+        finally { submit.disabled = false; }
+      },
+      async supportAdminReply(form) {
+        const id = +form.dataset.id, submit = form.querySelector('[type="submit"]');
+        submit.disabled = true;
+        try {
+          await api(`/api/admin/support/${id}/messages`, { method: 'POST', body: { body: form.elements.body.value } });
+          await loadAdmin(); notify('Réponse envoyée au membre.', 'success');
+        } catch (e) { fail(e); }
+        finally { submit.disabled = false; }
+      },
       admUsers(form) { admin.usersQ = form.elements.q.value.trim(); loadAdmin(); },
     };
     document.addEventListener('submit', event => {
@@ -5485,6 +5559,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       renderAccount();
       Object.assign(dm, { convs: [], loaded: false, error: '', thread: null, threadError: '', find: null, drafts: {} });
       if (state.view === 'messages') showMessages();
+      else if (state.view === 'support') showSupport();
       else if (state.view === 'community') showCommunity();
       else if (state.view === 'post') loadPost();
       else if (state.view === 'profile') loadProfile();
@@ -5653,7 +5728,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       </div>`;
     }
     // ---------- Page Communauté : navigation propre, fil central, colonne « découvrir » ----------
-    const COMM_VIEWS = ['community', 'post', 'profile', 'liveroom', 'messages'];
+    const COMM_VIEWS = ['community', 'post', 'profile', 'liveroom', 'messages', 'support'];
     const COMM_TABS = [['feed', 'home', 'Accueil'], ['following', 'users', 'Abonnements'], ['lives', 'radio', 'Directs'], ['people', 'search', 'Membres'], ['leaderboard', 'trophy', 'Classement']];
     const livesOn = () => auth.config.lives_enabled !== false || isMod();
     function renderCommNav() {
@@ -6424,6 +6499,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       try {
         if (tab === 'dashboard') admin.stats = await api('/api/admin/stats');
         else if (tab === 'reports') admin.reports = (await api('/api/admin/reports')).reports;
+        else if (tab === 'support') await loadAdminSupport();
         else if (tab === 'users') { const d = await api(`/api/admin/users?q=${encodeURIComponent(admin.usersQ)}&filter=${encodeURIComponent(admin.usersFilter)}`); admin.users = d.users; admin.usersHasMore = d.hasMore; }
         else if (tab === 'audit') { admin.auditSeq++; admin.auditLoading = false; const d = await api(auditUrl()); admin.audit = d.entries; admin.auditHasMore = d.hasMore; admin.auditCounts = d.counts; admin.auditError = ''; admin.auditTop = true; }
         else if (tab === 'messages') admin.messages = (await api('/api/admin/messages')).messages;
@@ -6755,8 +6831,52 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       clearTimeout(auditSearchTimer);
       auditSearchTimer = setTimeout(() => { admin.auditQ = event.target.value.trim(); loadAudit(); }, 350);
     });
+    const SUPPORT_CATEGORY = { question: 'Question', bug: 'Problème technique', suggestion: 'Suggestion', other: 'Autre' };
+    const SUPPORT_STATUS = { open: ['Ouvert', 'open'], waiting: ['En attente de vous', 'waiting'], closed: ['Résolu', 'closed'] };
+    function supportMessagesHtml(messages, userId) {
+      return messages.map(message => {
+        const mine = message.sender_id === userId;
+        const sender = mine ? 'Vous' : ['admin', 'moderator'].includes(message.role) ? 'Équipe Rhetora' : message.username;
+        return `<article class="support-message ${mine ? 'mine' : ''}"><div class="support-message-head"><b>${escapeHtml(sender)}</b><time>${escapeHtml(fmtDate(message.created_at * 1000))}</time></div><p>${escapeHtml(message.body)}</p></article>`;
+      }).join('');
+    }
+    async function loadAdminSupport() {
+      const current = admin.support.ticketId;
+      const data = await api('/api/admin/support');
+      admin.support.tickets = data.tickets || [];
+      if (!admin.support.tickets.some(ticket => ticket.id === current)) admin.support.ticketId = admin.support.tickets[0]?.id || 0;
+      const id = admin.support.ticketId;
+      if (!id) { admin.support.thread = null; return; }
+      await api(`/api/admin/support/${id}/read`, { method: 'POST' });
+      admin.support.thread = await api(`/api/admin/support/${id}`);
+      const ticket = admin.support.tickets.find(item => item.id === id);
+      if (ticket) ticket.unread = 0;
+    }
+    async function updateSupportStatus(id, status) {
+      try {
+        await api(`/api/admin/support/${id}`, { method: 'PATCH', body: { status } });
+        admin.support.ticketId = id;
+        await loadAdmin();
+      } catch (e) { fail(e); }
+    }
+    function admSupport() {
+      const support = admin.support, ticket = support.thread?.ticket;
+      const list = support.tickets.length ? support.tickets.map(item => {
+        const label = SUPPORT_STATUS[item.status] || SUPPORT_STATUS.open;
+        return `<button class="support-ticket ${support.ticketId === item.id ? 'active' : ''}" data-action="supportAdminSelect" data-id="${item.id}">
+          <span class="support-ticket-top"><strong>${escapeHtml(item.subject)}</strong><span class="support-status ${label[1]}">${label[0]}</span></span>
+          <small>${escapeHtml(item.username)} · ${SUPPORT_CATEGORY[item.category] || 'Autre'} · ${item.last_message ? escapeHtml(item.last_message.body) : ''}</small>
+          ${item.unread ? `<small>${pl(item.unread, 'nouveau message', 'nouveaux messages')}</small>` : ''}</button>`;
+      }).join('') : '<div class="support-empty">Aucune demande pour le moment.</div>';
+      const thread = ticket ? `<div class="support-panel-head"><div style="min-width:0;flex:1"><h2>${escapeHtml(ticket.subject)}</h2><small>${escapeHtml(ticket.username)} · ${escapeHtml(ticket.user.email)} · ${SUPPORT_CATEGORY[ticket.category] || 'Autre'}</small></div><span class="support-status ${(SUPPORT_STATUS[ticket.status] || SUPPORT_STATUS.open)[1]}">${(SUPPORT_STATUS[ticket.status] || SUPPORT_STATUS.open)[0]}</span></div>
+        <div class="support-thread-body" id="adminSupportMessages">${supportMessagesHtml(support.thread.messages, auth.user.id) || '<p class="muted">Aucun message.</p>'}</div>
+        <div class="support-admin-actions"><button class="btn sm" data-action="supportAdminStatus" data-id="${ticket.id}" data-status="${ticket.status === 'closed' ? 'open' : 'closed'}">${ticket.status === 'closed' ? 'Rouvrir' : 'Marquer résolu'}</button></div>
+        <form class="support-compose" data-form="supportAdminReply" data-id="${ticket.id}"><label for="adminSupportReply">Répondre au membre</label><textarea id="adminSupportReply" name="body" maxlength="5000" required placeholder="Votre réponse…"></textarea><div><button class="btn primary" type="submit">${icon('send', 14)}Envoyer la réponse</button></div></form>`
+        : '<div class="support-empty"><b>Sélectionnez une demande</b><span>Les échanges avec les membres apparaîtront ici.</span></div>';
+      return `<div class="support-page"><div class="support-grid"><section class="support-panel"><div class="support-panel-head"><h2>Demandes reçues</h2><span class="spacer"></span><button class="icon-btn" data-action="adminTab" data-tab="support" title="Actualiser" aria-label="Actualiser">${icon('refresh')}</button></div><div class="support-list">${list}</div></section><section class="support-panel support-thread">${thread}</section></div></div>`;
+    }
     const ADMIN_DESC = {
-      dashboard: 'Vue d’ensemble de l’activité de la communauté.', reports: 'Contenus signalés par les membres, à examiner et traiter.',
+      dashboard: 'Vue d’ensemble de l’activité de la communauté.', reports: 'Contenus signalés par les membres, à examiner et traiter.', support: 'Demandes des membres, réponses et suivi de résolution.',
       users: 'Rechercher, gérer, suspendre ou promouvoir les comptes.', llm: 'Moteurs d’analyse et de transcription, clés API et quotas.',
       messages: 'Annonces de l’administration envoyées aux membres.', ads: 'Annonces sponsorisées affichées dans la communauté.',
       settings: 'Inscriptions, publications, directs, annonce globale et e-mails.', trash: 'Contenus et comptes supprimés, restaurables temporairement.',
@@ -6772,7 +6892,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       $('adminTabs').innerHTML = group('Modération', tabs.filter(t => t[3] === 'moderator')) + group('Administration', tabs.filter(t => t[3] === 'admin'));
       $('adminHead').innerHTML = `<span class="bubble tone-purple">${icon(cur[2], 22)}</span><div><h1>${cur[1]}</h1><p>${ADMIN_DESC[cur[0]] || ''}</p></div>`;
       $('adminBody').innerHTML = admin.loading ? '<div class="skeleton" style="height:240px;border-radius:16px"></div>'
-        : { dashboard: admDashboard, reports: admReports, users: admUsers, llm: admLlm, messages: admMessages, ads: admAds, settings: admSettings, trash: admTrash, audit: admAudit }[admin.tab]();
+        : { dashboard: admDashboard, reports: admReports, support: admSupport, users: admUsers, llm: admLlm, messages: admMessages, ads: admAds, settings: admSettings, trash: admTrash, audit: admAudit }[admin.tab]();
       if (admin.tab === 'audit' && !admin.loading) renderAudit();
     }
     function admField(el) {
@@ -6923,6 +7043,12 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
           if (auth.user) auth.user.unread = Math.max(0, (auth.user.unread || 0) - 1);
           renderNotifBell();
           api('/api/me/notifications/read', { method: 'POST', body: { ids: [n.id] } }).catch(() => {});
+        }
+        if (n.kind === 'support') {
+          closeMenu();
+          if (isMod() && n.title !== 'Réponse de l’équipe Rhetora') { admin.tab = 'support'; switchView('admin'); }
+          else switchView('support');
+          return;
         }
         if (n.kind === 'follow' && n.actor) { closeMenu(); openProfile(n.actor); return; }
         if (n.kind === 'live' && n.actor) {
@@ -7601,6 +7727,64 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
     window.addEventListener('beforeunload', () => {
       if (bcast.id) fetch(`/api/community/lives/${bcast.id}/end`, { method: 'POST', keepalive: true, credentials: 'same-origin', headers: { 'X-Rhetora': '1' } }).catch(() => {});
     });
+    async function showSupport() {
+      renderSupport();
+      await authReady;
+      if (state.view !== 'support') return;
+      if (!auth.user) { renderSupport(); return; }
+      await loadSupport();
+    }
+    async function loadSupport(ticketId = supportUI.ticketId) {
+      if (!auth.user) { renderSupport(); return; }
+      supportUI.error = '';
+      try {
+        const data = await api('/api/me/support');
+        supportUI.tickets = data.tickets || [];
+        if (!supportUI.tickets.some(ticket => ticket.id === ticketId)) ticketId = supportUI.tickets[0]?.id || 0;
+        supportUI.ticketId = ticketId;
+        if (ticketId) {
+          await api(`/api/me/support/${ticketId}/read`, { method: 'POST' });
+          supportUI.thread = await api(`/api/me/support/${ticketId}`);
+          const ticket = supportUI.tickets.find(item => item.id === ticketId);
+          if (ticket) ticket.unread = 0;
+        } else supportUI.thread = null;
+      } catch (e) { supportUI.error = e.message; }
+      renderSupport();
+    }
+    function renderSupport() {
+      if (state.view !== 'support') return;
+      const box = $('supportBody');
+      if (!auth.user) {
+        box.innerHTML = `<div class="support-empty"><h1>Aide et support</h1><p>Connectez-vous pour contacter l’équipe Rhetora et suivre vos demandes.</p><button class="btn primary" data-action="authOpen" data-mode="login">${icon('user', 14)}Se connecter</button></div>`;
+        return;
+      }
+      const selected = supportUI.tickets.find(ticket => ticket.id === supportUI.ticketId);
+      const list = supportUI.tickets.length ? supportUI.tickets.map(ticket => {
+        const status = SUPPORT_STATUS[ticket.status] || SUPPORT_STATUS.open;
+        return `<button class="support-ticket ${ticket.id === supportUI.ticketId ? 'active' : ''}" data-action="supportSelect" data-id="${ticket.id}">
+          <span class="support-ticket-top"><strong>${escapeHtml(ticket.subject)}</strong><span class="support-status ${status[1]}">${status[0]}</span></span>
+          <small>${SUPPORT_CATEGORY[ticket.category] || 'Autre'} · ${ticket.last_message ? escapeHtml(ticket.last_message.body) : ''}</small>
+          ${ticket.unread ? `<small>${pl(ticket.unread, 'nouvelle réponse', 'nouvelles réponses')}</small>` : ''}</button>`;
+      }).join('') : '<div class="support-empty">Vos demandes et réponses apparaîtront ici.</div>';
+      let detail = '';
+      if (supportUI.creating) {
+        detail = `<div class="support-panel-head"><h2>Nouvelle demande</h2></div><form class="support-compose" data-form="supportCreate">
+          <label for="supportCategory">Sujet</label><select id="supportCategory" name="category"><option value="question">Question</option><option value="bug">Problème technique</option><option value="suggestion">Suggestion</option><option value="other">Autre</option></select>
+          <label for="supportSubject">Objet</label><input id="supportSubject" name="subject" maxlength="150" required placeholder="Résumez votre demande">
+          <label for="supportBodyInput">Message</label><textarea id="supportBodyInput" name="body" maxlength="5000" required placeholder="Décrivez votre besoin…"></textarea>
+          <div><button class="btn primary" type="submit">${icon('send', 14)}Envoyer à l’équipe</button></div></form>`;
+      } else if (selected && supportUI.thread) {
+        const ticket = supportUI.thread.ticket, status = SUPPORT_STATUS[ticket.status] || SUPPORT_STATUS.open;
+        detail = `<div class="support-panel-head"><div style="min-width:0;flex:1"><h2>${escapeHtml(ticket.subject)}</h2><small>${SUPPORT_CATEGORY[ticket.category] || 'Autre'} · Créée ${escapeHtml(fmtDate(ticket.created_at * 1000))}</small></div><span class="support-status ${status[1]}">${status[0]}</span><button class="icon-btn" data-action="supportRefresh" title="Actualiser" aria-label="Actualiser">${icon('refresh')}</button></div>
+          <div class="support-thread-body" id="supportMessages">${supportMessagesHtml(supportUI.thread.messages, auth.user.id)}</div>
+          <form class="support-compose" data-form="supportReply" data-id="${ticket.id}"><label for="supportReplyInput">Votre réponse</label><textarea id="supportReplyInput" name="body" maxlength="5000" required placeholder="Écrivez votre message à l’équipe…"></textarea><small class="muted">Répondre à une demande résolue la rouvre automatiquement.</small><div><button class="btn primary" type="submit">${icon('send', 14)}Envoyer</button></div></form>`;
+      } else {
+        detail = `<div class="support-empty"><b>${supportUI.error ? escapeHtml(supportUI.error) : 'Comment pouvons-nous vous aider ?'}</b><span>Créez une demande pour échanger avec l’équipe Rhetora.</span><button class="btn primary" data-action="supportNew">${icon('plus', 14)}Nouvelle demande</button></div>`;
+      }
+      box.innerHTML = `<header class="support-head"><div style="flex:1"><h1>Aide et support</h1><p>Échangez avec l’équipe Rhetora, suivez les réponses et vos demandes.</p></div><button class="btn" data-action="supportNew">${icon('plus', 14)}Nouvelle demande</button></header>
+        <div class="support-grid"><section class="support-panel"><div class="support-panel-head"><h2>Vos demandes</h2><span class="spacer"></span><button class="icon-btn" data-action="supportRefresh" title="Actualiser" aria-label="Actualiser">${icon('refresh')}</button></div><div class="support-list">${list}</div></section><section class="support-panel support-thread">${detail}</section></div>`;
+    }
+
     // ---------- Messages privés entre membres ----------
     const dm = { convs: [], loaded: false, error: '', peer: '', thread: null, threadError: '', loadingOlder: false, find: null, drafts: {}, sending: false, polling: false, tick: 0, composerKey: '', shown: 0 };
     const DM_POLICY_LABEL = { all: 'Tout le monde', following: 'Seulement les comptes que je suis', none: 'Personne (je peux toujours répondre)' };
@@ -7902,7 +8086,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
     function routeHash(hash = location.hash) {
       if (typeof hash !== 'string') hash = location.hash;
       const post = hash.match(/^#\/post\/(\d+)$/), user = hash.match(/^#\/u\/(.+)$/), liveId = hash.match(/^#\/live\/(\d+)$/);
-      const msgs = hash.match(/^#\/messages(?:\/(.+))?$/);
+      const msgs = hash.match(/^#\/messages(?:\/(.+))?$/), support = /^#\/support\/?$/.test(hash);
       const intake = hash.match(/^#\/(analyser|explorer)\?(.*)$/);
       const verification = hash.match(/^#\/verification\?statut=(ok|invalide)$/);
       if (verification) {
@@ -7919,6 +8103,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, selon ce forma
       else if (liveId) openLive(liveId[1]);
       else if (user) { try { openProfile(decodeURIComponent(user[1])); } catch { /* lien invalide */ } }
       else if (msgs) { try { const name = msgs[1] ? decodeURIComponent(msgs[1]) : ''; if (state.view !== 'messages' || name !== dm.peer) openDm(name); } catch { /* lien invalide */ } }
+      else if (support && state.view !== 'support') switchView('support');
       else if (/^#\/admin\/?$/.test(hash) && state.view !== 'admin') switchView('admin');
       else if (/^#\/communaute\/?$/.test(hash) && state.view !== 'community') switchView('community');
     }
